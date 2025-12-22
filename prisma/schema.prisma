@@ -1,0 +1,246 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id       String @id @default(uuid())
+  username String @unique
+
+  role     String @default("USER")
+
+  mainCharacterId String?
+  characters      Character[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Character {
+  id         String @id @default(uuid())
+  name       String
+  server     String
+  class      String
+  pwobsLink  String @default("")
+  gameCharId String @default("")
+
+  // Stats
+  level           Float @default(0)
+  minAttack       Float @default(0)
+  maxAttack       Float @default(0)
+  critChance      Float @default(0)
+  critDamage      Float @default(0)
+  spirit          Float @default(0)
+  physPenetration Float @default(0)
+  magPenetration  Float @default(0)
+  levelBonus      Float @default(0)
+  chanting        Float @default(0)
+  atkPerSec       Float @default(0)
+  attackLevel     Float @default(0)
+  health          Float @default(0)
+  physDef         Float @default(0)
+  magDef          Float @default(0)
+  defenseLevel    Float @default(0)
+  physReduction   Float @default(0)
+  magReduction    Float @default(0)
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId String
+
+  clan         Clan?     @relation(fields: [clanId], references: [id])
+  clanId       String?
+  clanRole     String?
+  clanJoinDate DateTime?
+
+  rhythmRecords             Rhythm[]
+  forbiddenKnowledgeRecords ForbiddenKnowledge[]
+  clanHallProgress          ClanHallProgress[]
+  eventParticipations       EventParticipant[]
+
+  applications ClanApplication[]
+  auditLogs    AuditLog[]
+}
+
+model Clan {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  icon        String?
+  server      String
+  settings    Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?
+
+  members      Character[]
+  applications ClanApplication[]
+
+  weeklyContexts ClanWeeklyContext[]
+
+  history   FactionHistory[]
+  auditLogs AuditLog[]
+}
+
+model ClanWeeklyContext {
+  id     String @id @default(uuid())
+  clan   Clan   @relation(fields: [clanId], references: [id])
+  clanId String
+
+  dateStart  DateTime
+  dateEnd    DateTime
+  weekIso    String
+  weekNumber Int
+
+  rhythmRecords             Rhythm[]
+  forbiddenKnowledgeRecords ForbiddenKnowledge[]
+  clanHall                  ClanHall?
+  events                    Event[]
+
+  @@unique([clanId, weekIso])
+}
+
+model Rhythm {
+  id                String            @id @default(uuid())
+  character         Character         @relation(fields: [characterId], references: [id])
+  characterId       String
+  clanWeeklyContext ClanWeeklyContext @relation(fields: [contextId], references: [id])
+  contextId         String
+  valor             Int
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([contextId, characterId])
+}
+
+model ForbiddenKnowledge {
+  id                String            @id @default(uuid())
+  character         Character         @relation(fields: [characterId], references: [id])
+  characterId       String
+  clanWeeklyContext ClanWeeklyContext @relation(fields: [contextId], references: [id])
+  contextId         String
+  valor             Int
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@unique([contextId, characterId])
+}
+
+model ClanHall {
+  id                String            @id @default(uuid())
+  clanWeeklyContext ClanWeeklyContext @relation(fields: [contextId], references: [id])
+  contextId         String            @unique
+
+  progress ClanHallProgress[]
+}
+
+model ClanHallProgress {
+  id          String    @id @default(uuid())
+  clanHall    ClanHall  @relation(fields: [clanHallId], references: [id])
+  clanHallId  String
+  character   Character @relation(fields: [characterId], references: [id])
+  characterId String
+  stage       Int
+  valor       Int
+  gold        Int
+  createdAt   DateTime  @default(now())
+
+  @@unique([clanHallId, characterId, stage])
+}
+
+model Event {
+  id                String            @id @default(uuid())
+  clanWeeklyContext ClanWeeklyContext @relation(fields: [contextId], references: [id])
+  contextId         String
+
+  type        String
+  name        String
+  description String?
+  date        DateTime
+  rallyTime   DateTime?
+  status      String
+  opponent    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  participants EventParticipant[]
+  squads       Squad[]
+}
+
+model EventParticipant {
+  id          String    @id @default(uuid())
+  event       Event     @relation(fields: [eventId], references: [id])
+  eventId     String
+  character   Character @relation(fields: [characterId], references: [id])
+  characterId String
+
+  status     String
+  attendance Boolean @default(false)
+
+  @@unique([eventId, characterId])
+}
+
+model Squad {
+  id       String   @id @default(uuid())
+  name     String
+  event    Event    @relation(fields: [eventId], references: [id])
+  eventId  String
+  leaderId String
+  members  String[]
+}
+
+model ClanApplication {
+  id          String    @id @default(uuid())
+  clan        Clan      @relation(fields: [clanId], references: [id])
+  clanId      String
+  character   Character @relation(fields: [characterId], references: [id])
+  characterId String
+  message     String
+  status      String
+  createdDate DateTime  @default(now())
+}
+
+model FactionHistory {
+  id          String   @id @default(uuid())
+  clan        Clan     @relation(fields: [clanId], references: [id])
+  clanId      String
+  recordId    Int
+  date        DateTime
+  characterId Int
+  action      String
+  description String
+  param0      Int
+  param1      Int
+  param2      Int
+  createdAt   DateTime @default(now())
+
+  @@unique([clanId, recordId])
+}
+
+model AuditLog {
+  id        String     @id @default(uuid())
+  clan      Clan       @relation(fields: [clanId], references: [id])
+  clanId    String
+  actor     Character? @relation(fields: [actorId], references: [id])
+  actorId   String?
+  action    String
+  target    String?
+  details   Json?
+  createdAt DateTime   @default(now())
+}
+
+model TaskLog {
+  id        String    @id @default(uuid())
+  taskName  String
+  status    String
+  message   String?
+  logs      String?   @db.Text
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  duration  Int?
+}
