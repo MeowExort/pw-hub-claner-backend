@@ -85,7 +85,7 @@ export class TasksService {
             'Призрак', 'Жнец'
         ];
         const clanNames = ['RedHorde', 'Alliance', 'Shadows', 'LightKeepers', 'Noobs'];
-        const servers = ['Центавр', 'Фенрир', 'Мицар'];
+        const servers = ['Центавр', 'Фенрир', 'Мицар', 'Капелла'];
 
         const clans = [];
         for (const name of clanNames) {
