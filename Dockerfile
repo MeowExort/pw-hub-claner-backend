@@ -33,4 +33,4 @@ COPY package.json pnpm-lock.yaml ./
 
 EXPOSE 3000
 # Run prisma generate/db push at container start then start the app
-CMD ["sh", "-c", "pnpm prisma generate && pnpm prisma db push && node dist/main.js"]
+CMD ["sh", "-c", "pnpm prisma generate && pnpm prisma db push --accept-data-loss && node dist/main.js"]
