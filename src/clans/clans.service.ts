@@ -292,9 +292,9 @@ export class ClansService {
         throw new ForbiddenException('Cannot modify role of member with equal or higher rank');
     }
 
-    // Cannot promote to a rank higher than own
-    if (newLevel > actorLevel) {
-        throw new ForbiddenException('Cannot promote to a rank higher than your own');
+    // Cannot promote to a rank higher than or equal to own
+    if (newLevel >= actorLevel) {
+        throw new ForbiddenException('Cannot promote to a rank higher than or equal to your own');
     }
 
     return this.prisma.character.update({

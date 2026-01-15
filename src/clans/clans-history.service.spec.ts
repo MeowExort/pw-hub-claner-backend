@@ -16,12 +16,15 @@ describe('ClansHistoryService', () => {
       user: { findUnique: jest.fn() },
       character: { findMany: jest.fn(), update: jest.fn() },
       clanWeeklyContext: { findUnique: jest.fn(), create: jest.fn() },
-      clanHall: { create: jest.fn() },
+      clanHall: { findUnique: jest.fn(), create: jest.fn() },
       rhythm: { upsert: jest.fn() },
       forbiddenKnowledge: { upsert: jest.fn() },
-      clanHallProgress: { upsert: jest.fn() },
+      clanHallProgress: { findMany: jest.fn(), upsert: jest.fn() },
       factionHistory: { findMany: jest.fn(), upsert: jest.fn() },
-      $transaction: jest.fn((args) => Promise.resolve(args)),
+      $transaction: jest.fn((args) => {
+          if (Array.isArray(args)) return Promise.resolve(args);
+          return Promise.resolve(args(prismaMock));
+      }),
     };
 
     const auditMock = {
@@ -69,7 +72,8 @@ describe('ClansHistoryService', () => {
         // Mock parser
         const records: ParsedFactionRecord[] = [
             { id: 100, timestamp: 1234567890, who: 1, type: 1, params: [7, 0, 0], action: 'A', description: 'D', date: new Date('2025-01-01') },
-            { id: 101, timestamp: 1234567890, who: 1, type: 1, params: [4, 20, 0], action: 'A', description: 'D', date: new Date('2025-01-01') },
+            { id: 101, timestamp: 1234567891, who: 1, type: 1, params: [4, 20, 0], action: 'A', description: 'D', date: new Date('2025-01-01') },
+            { id: 102, timestamp: 1234567891, who: 1, type: 2, params: [20, 0, 0], action: 'A', description: 'D', date: new Date('2025-01-01') },
         ];
         parser.parse.mockReturnValue(records);
 
@@ -79,18 +83,19 @@ describe('ClansHistoryService', () => {
         prisma.user.findUnique.mockResolvedValue({ id: userId, mainCharacterId: 'char1' });
         
         // Mock Weekly Context
-        prisma.clanWeeklyContext.findUnique.mockResolvedValue(null);
-        prisma.clanWeeklyContext.create.mockResolvedValue({ id: 'ctx1', clanHall: { id: 'ch1' } });
+        prisma.clanWeeklyContext.findUnique.mockResolvedValue({ id: 'ctx1', clanHall: { id: 'ch1' }, dateStart: new Date('2024-12-30') });
+        prisma.clanHall.findUnique.mockResolvedValue({ id: 'ch1' });
+        prisma.clanHallProgress.findMany.mockResolvedValue([]);
 
         await service.processHistoryTask(taskId, userId, clanId, fileBuffer);
 
         const task = await service.getUploadTask(taskId);
         expect(task.status).toBe('COMPLETED');
-        expect(task.total).toBe(2);
+        expect(task.total).toBe(3);
         expect(task.result.zuCirclesAdded).toBe(1);
-        expect(task.result.khChecksAdded).toBe(1); // 4, 20 is stage 1
+        expect(task.result.khChecksAdded).toBe(1); 
 
-        expect(prisma.factionHistory.upsert).toHaveBeenCalledTimes(2);
+        expect(prisma.factionHistory.upsert).toHaveBeenCalledTimes(3);
         expect(prisma.forbiddenKnowledge.upsert).toHaveBeenCalled();
         expect(prisma.clanHallProgress.upsert).toHaveBeenCalled();
     });
@@ -106,7 +111,7 @@ describe('ClansHistoryService', () => {
               rhythmRecords: [{ characterId: 'char1', valor: 10 }],
               forbiddenKnowledgeRecords: [{ characterId: 'char1', valor: 7, circles: 1 }],
               clanHall: {
-                  progress: [{ characterId: 'char1', stage: 1, valor: 4, gold: 20 }]
+                  progress: [{ characterId: 'char1', stage: 1, valor: 4, gold: 20, createdAt: new Date() }]
               },
               events: []
           });
@@ -124,7 +129,7 @@ describe('ClansHistoryService', () => {
           expect(result).toHaveLength(2);
           const char1 = result.find(r => r.characterId === 'char1');
           expect(char1).toBeDefined();
-          expect(char1.totalValor).toBe(17); // 10 + 7
+          expect(char1.totalValor).toBe(21); // 10 (rhythm) + 7 (forbiddenKnowledge) + 4 (clan hall stage 1)
           
           const char2 = result.find(r => r.characterId === 'char2');
           expect(char2.totalValor).toBe(0);

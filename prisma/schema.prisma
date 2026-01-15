@@ -11,7 +11,7 @@ model User {
   id       String @id @default(uuid())
   username String @unique
 
-  role     String @default("USER")
+  role String @default("USER")
 
   mainCharacterId String?
   characters      Character[]
@@ -148,7 +148,7 @@ model ClanHallProgress {
   gold        Int
   createdAt   DateTime  @default(now())
 
-  @@unique([clanHallId, characterId, stage])
+  @@unique([clanHallId, characterId, stage, createdAt])
 }
 
 model Event {

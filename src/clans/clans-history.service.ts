@@ -381,15 +381,23 @@ export class ClansHistoryService {
         
         for (const [charId, sMap] of khUpdates) {
             for (const [stage, data] of sMap) {
-                await this.prisma.clanHallProgress.upsert({
-                    where: { clanHallId_characterId_stage: { clanHallId: context.clanHall!.id, characterId: charId, stage } },
+                const createdAt = new Date(data.ts * 1000);
+                await (this.prisma.clanHallProgress as any).upsert({
+                    where: { 
+                        clanHallId_characterId_stage_createdAt: { 
+                            clanHallId: context.clanHall!.id, 
+                            characterId: charId, 
+                            stage,
+                            createdAt
+                        } 
+                    } as any,
                     create: {
                         clanHallId: context.clanHall!.id,
                         characterId: charId,
                         stage,
                         valor: data.valor,
                         gold: data.gold,
-                        createdAt: new Date(data.ts * 1000)
+                        createdAt
                     },
                     update: {
                         valor: data.valor,
@@ -450,28 +458,33 @@ export class ClansHistoryService {
                          }
                      });
                      
-                     const newStagesSet = new Set(khRecords.map(r => r.stage));
-                     
-                     const toDelete = existing.filter(e => !newStagesSet.has(e.stage));
+                     const newStagesKeys = new Set(khRecords.map(r => {
+                         const targetDate = new Date(context.dateStart);
+                         targetDate.setUTCDate(targetDate.getUTCDate() + r.dayIndex);
+                         return `${r.stage}_${targetDate.toISOString()}`;
+                     }));
+                    
+                     const toDelete = existing.filter(e => !newStagesKeys.has(`${e.stage}_${e.createdAt.toISOString()}`));
                      if (toDelete.length > 0) {
                          await tx.clanHallProgress.deleteMany({
                              where: { id: { in: toDelete.map(e => e.id) } }
                          });
                      }
-                     
+                    
                      for (const record of khRecords) {
                          const targetDate = new Date(context.dateStart);
                          targetDate.setUTCDate(targetDate.getUTCDate() + record.dayIndex);
-                         
+                        
                          const vals = this.getKhStageValues(record.stage);
-                         await tx.clanHallProgress.upsert({
+                         await (tx.clanHallProgress as any).upsert({
                              where: { 
-                                 clanHallId_characterId_stage: { 
+                                 clanHallId_characterId_stage_createdAt: { 
                                      clanHallId: clanHall.id, 
                                      characterId, 
-                                     stage: record.stage 
+                                     stage: record.stage,
+                                     createdAt: targetDate
                                  } 
-                             },
+                             } as any,
                              create: {
                                  clanHallId: clanHall.id,
                                  characterId,
@@ -481,7 +494,6 @@ export class ClansHistoryService {
                                  createdAt: targetDate
                              },
                              update: {
-                                 createdAt: targetDate,
                                  valor: vals.valor,
                                  gold: vals.gold
                              }
