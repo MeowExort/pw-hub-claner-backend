@@ -21,6 +21,16 @@ export class UpdateClanSettingsDto {
     @IsOptional()
     @IsObject()
     obligations?: any;
+
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsString()
+    telegramGroupId?: string;
+
+    @ApiProperty({ required: false })
+    @IsOptional()
+    @IsString()
+    telegramThreadId?: string;
 }
 
 export class UpdateRolePermissionsDto {

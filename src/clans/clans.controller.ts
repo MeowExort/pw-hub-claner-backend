@@ -148,6 +148,19 @@ export class ClansController {
       return this.clansService.updateSettings(req.user.id, id, dto);
   }
 
+  @Post(':id/clan-hall')
+  @UseGuards(AuthGuard('jwt'), PermissionsGuard)
+  @RequirePermissions(ClanPermission.CAN_UPLOAD_REPORTS)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Mark clan hall attendance' })
+  markAttendance(
+      @Req() req,
+      @Param('id') id: string,
+      @Body() dto: { characterId: string, stage: number, valor: number, gold: number }
+  ) {
+      return this.clansService.markClanHallAttendance(req.user.id, id, dto.characterId, dto.stage, dto.valor, dto.gold);
+  }
+
   @Post(':id/history/upload')
   @UseGuards(AuthGuard('jwt'), PermissionsGuard)
   @ApiBearerAuth()

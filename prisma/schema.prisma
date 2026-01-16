@@ -13,15 +13,35 @@ model User {
 
   role String @default("USER")
 
+  telegramId       String?   @unique
+  telegramUsername String?
+  otpCode          String?
+  otpExpiresAt     DateTime?
+
   mainCharacterId String?
   characters      Character[]
+
+  notificationSettings NotificationSettings?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
+model NotificationSettings {
+  id     String @id @default(uuid())
+  user   User   @relation(fields: [userId], references: [id])
+  userId String @unique
+
+  clanApplications    Boolean @default(true)
+  applicationDecision Boolean @default(true)
+  attendanceMarking   Boolean @default(true)
+  pvpEventCreated     Boolean @default(true)
+  pvpEventRally       Boolean @default(true)
+}
+
 model Character {
   id         String @id @default(uuid())
+  shortId    String @unique @default(uuid()) // Temporary default, will be updated
   name       String
   server     String
   class      String
@@ -63,6 +83,7 @@ model Character {
 
   applications ClanApplication[]
   auditLogs    AuditLog[]
+  votes        ApplicationVote[]
 }
 
 model Clan {
@@ -75,6 +96,9 @@ model Clan {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   updatedBy   String?
+
+  telegramGroupId  String?
+  telegramThreadId String?
 
   members      Character[]
   applications ClanApplication[]
@@ -168,6 +192,9 @@ model Event {
   updatedAt DateTime @updatedAt
   updatedBy String?
 
+  telegramGroupMessageId      String?
+  telegramRallyGroupMessageId String?
+
   participants EventParticipant[]
   squads       Squad[]
 }
@@ -179,8 +206,10 @@ model EventParticipant {
   character   Character @relation(fields: [characterId], references: [id])
   characterId String
 
-  status     String
-  attendance Boolean @default(false)
+  status                 String
+  attendance             Boolean @default(false)
+  telegramMessageId      String?
+  telegramRallyMessageId String?
 
   @@unique([eventId, characterId])
 }
@@ -203,6 +232,19 @@ model ClanApplication {
   message     String
   status      String
   createdDate DateTime  @default(now())
+
+  votes ApplicationVote[]
+}
+
+model ApplicationVote {
+  id            String          @id @default(uuid())
+  application   ClanApplication @relation(fields: [applicationId], references: [id])
+  applicationId String
+  character     Character       @relation(fields: [characterId], references: [id])
+  characterId   String
+  vote          Int // 1 for upvote, -1 for downvote
+
+  @@unique([applicationId, characterId])
 }
 
 model FactionHistory {

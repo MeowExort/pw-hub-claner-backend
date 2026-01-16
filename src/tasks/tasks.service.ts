@@ -3,6 +3,8 @@ import {Cron} from '@nestjs/schedule';
 import {ClansService} from '../clans/clans.service';
 import {EventsService} from '../events/events.service';
 import {PrismaService} from '../prisma/prisma.service';
+import {TelegramService} from '../telegram/telegram.service';
+import {Markup} from 'telegraf';
 
 interface TaskDefinition {
     id: string;
@@ -21,6 +23,7 @@ export class TasksService {
         private readonly clansService: ClansService,
         private readonly eventsService: EventsService,
         private readonly prisma: PrismaService,
+        private readonly telegram: TelegramService,
     ) {
         this.registerTasks();
     }
@@ -32,6 +35,14 @@ export class TasksService {
             schedule: '* * * * *',
             description: 'Обновляет/создает еженедельный контекст (КХ, ЗУ, Ритм) для всех кланов',
             execute: this.createWeeklyClanContextsLogic.bind(this),
+        });
+
+        this.tasks.set('rally-notifications', {
+            id: 'rally-notifications',
+            name: 'Уведомления о начале сбора',
+            schedule: '* * * * *',
+            description: 'Проверяет события и отправляет уведомления о начале сбора',
+            execute: this.rallyNotificationsLogic.bind(this),
         });
 
         this.tasks.set('populate-db', {
@@ -49,6 +60,35 @@ export class TasksService {
             description: 'Удаляет все данные (Кланы, Персонажи, События)',
             execute: this.clearDbLogic.bind(this),
         });
+
+        this.tasks.set('fix-short-ids', {
+            id: 'fix-short-ids',
+            name: 'Исправить Short ID',
+            schedule: 'MANUAL',
+            description: 'Генерирует shortId для всех персонажей, у которых его нет',
+            execute: this.fixShortIdsLogic.bind(this),
+        });
+    }
+
+    private async fixShortIdsLogic() {
+        this.logger.log('Fixing short IDs...');
+        const chars = await this.prisma.character.findMany({
+            where: {
+                OR: [
+                    { shortId: null },
+                    { shortId: { contains: '-' } } // UUIDs usually have hyphens
+                ]
+            }
+        });
+
+        for (const char of chars) {
+            const shortId = Math.random().toString(36).substring(2, 8);
+            await this.prisma.character.update({
+                where: { id: char.id },
+                data: { shortId }
+            });
+        }
+        this.logger.log(`Fixed ${chars.length} short IDs.`);
     }
 
     private async clearDbLogic() {
@@ -184,6 +224,7 @@ export class TasksService {
     @Cron('* * * * *')
     async handleWeeklyEvents() {
         await this.runTask('weekly-clan-contexts');
+        await this.runTask('rally-notifications');
     }
 
     async runTask(taskId: string, context?: any) {
@@ -288,6 +329,86 @@ export class TasksService {
                 });
             } else {
                 this.logger.debug(`Weekly context already exists for clan ${clan.name} week ${weekIsoStr}`);
+            }
+        }
+    }
+
+    private async rallyNotificationsLogic() {
+        this.logger.debug('Checking events for rally notifications...');
+        const now = new Date();
+        const oneMinuteFromNow = new Date(now.getTime() + 60 * 1000);
+
+        const events = await this.prisma.event.findMany({
+            where: {
+                rallyTime: {
+                    gte: now,
+                    lte: oneMinuteFromNow
+                },
+                status: 'UPCOMING'
+            },
+            include: {
+                clanWeeklyContext: {
+                    include: { clan: true }
+                }
+            }
+        });
+
+        for (const event of events) {
+            const clan = event.clanWeeklyContext.clan;
+            const members = await this.prisma.character.findMany({
+                where: { clanId: clan.id },
+                include: { user: { include: { notificationSettings: true } } }
+            });
+
+            const dateStr = new Date(event.date).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+            const message = `<b>Сбор на событие начался!</b>\nСобытие: <b>${event.name}</b>\nДата: ${dateStr}`;
+
+            // Group by telegramId to avoid duplicate messages per user
+            const notifiedTelegramIds = new Set<string>();
+
+            for (const member of members) {
+                if (member.user.telegramId && 
+                    member.user.notificationSettings?.pvpEventRally && 
+                    !notifiedTelegramIds.has(member.user.telegramId)) {
+                    
+                    const sent = await this.telegram.sendMessage(member.user.telegramId, message);
+                    if (sent) {
+                        await this.prisma.eventParticipant.upsert({
+                            where: {
+                                eventId_characterId: {
+                                    eventId: event.id,
+                                    characterId: member.id
+                                }
+                            },
+                            create: {
+                                eventId: event.id,
+                                characterId: member.id,
+                                status: 'UNDECIDED',
+                                telegramRallyMessageId: sent.message_id.toString()
+                            },
+                            update: {
+                                telegramRallyMessageId: sent.message_id.toString()
+                            }
+                        });
+                    }
+                    notifiedTelegramIds.add(member.user.telegramId);
+                }
+            }
+
+            // Notify Group
+            if (clan.telegramGroupId) {
+                const groupMessage = await this.telegram.sendMessage(clan.telegramGroupId, message, {
+                    message_thread_id: clan.telegramThreadId
+                });
+                if (groupMessage) {
+                    await this.prisma.event.update({
+                        where: { id: event.id },
+                        data: { telegramRallyGroupMessageId: groupMessage.message_id.toString() }
+                    });
+                    if (!clan.telegramThreadId) {
+                        await this.telegram.pinMessage(clan.telegramGroupId, groupMessage.message_id);
+                    }
+                }
             }
         }
     }

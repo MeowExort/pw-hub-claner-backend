@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Put, Patch, UseGuards, Req, BadRequestException, ParseArrayPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Patch, Delete, UseGuards, Req, BadRequestException, ParseArrayPipe } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { RsvpDto } from './dto/rsvp.dto';
@@ -58,7 +58,17 @@ export class EventsController {
   @Patch(':id/complete')
   @RequirePermissions(ClanPermission.CAN_EDIT_EVENTS)
   @ApiOperation({ summary: 'Complete event' })
+  @ApiResponse({ status: 200, description: 'Event completed' })
   complete(@Req() req, @Param('id') id: string, @Body() body: { reportUploaded: boolean }) {
       return this.eventsService.completeEvent(req.user.id, id, body.reportUploaded);
+  }
+
+  @Delete(':id')
+  @RequirePermissions(ClanPermission.CAN_DELETE_EVENTS)
+  @ApiOperation({ summary: 'Delete event' })
+  @ApiResponse({ status: 200, description: 'Event deleted' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  delete(@Req() req, @Param('id') id: string) {
+    return this.eventsService.delete(id, req.character);
   }
 }

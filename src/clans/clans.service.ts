@@ -5,13 +5,16 @@ import { CreateApplicationDto, UpdateApplicationDto, ApplicationDecision } from 
 import { UpdateClanSettingsDto, UpdateRolePermissionsDto, AddCustomEventTemplateDto } from './dto/update-settings.dto';
 import { AuditService } from '../audit/audit.service';
 import { randomUUID } from 'crypto';
+import { TelegramService } from '../telegram/telegram.service';
+import { Markup } from 'telegraf';
 
 
 @Injectable()
 export class ClansService {
   constructor(
       private prisma: PrismaService,
-      private audit: AuditService
+      private audit: AuditService,
+      private telegram: TelegramService
   ) {}
 
   async findAll() {
@@ -108,7 +111,10 @@ export class ClansService {
   }
 
   async getApplications(id: string) {
-      return this.prisma.clanApplication.findMany({ where: { clanId: id } });
+      return this.prisma.clanApplication.findMany({ 
+          where: { clanId: id },
+          include: { votes: true, character: true }
+      });
   }
 
   async apply(userId: string, clanId: string, dto: CreateApplicationDto) {
@@ -124,20 +130,68 @@ export class ClansService {
       });
       if (existing) throw new BadRequestException('Already applied');
 
-      await this.prisma.clanApplication.create({
+      const app = await this.prisma.clanApplication.create({
           data: {
               clanId,
               characterId: charId,
               message: dto.message,
               status: 'PENDING'
+          },
+          include: {
+              character: true,
+              clan: true
           }
       });
+
+      // Notify officers
+      await this.notifyOfficersAboutApplication(app);
+  }
+
+  private async notifyOfficersAboutApplication(app: any) {
+    const officers = await this.prisma.character.findMany({
+        where: {
+            clanId: app.clanId,
+            clanRole: { in: ['MASTER', 'MARSHAL', 'OFFICER'] } // Simplified check, should ideally check permissions
+        },
+        include: { user: { include: { notificationSettings: true } } }
+    });
+
+    const baseUrl = process.env.FRONTEND_URL || 'https://claner.pw-hub.ru';
+    const characterLink = `\n<a href="${baseUrl}/c/${app.character.shortId || app.character.id}">Профиль персонажа</a>`;
+    const message = `<b>Новая заявка в клан ${app.clan.name}</b>\nОт: <code>${app.character.name}</code> (${app.character.class})${characterLink}\nСообщение: ${app.message}`;
+
+    for (const officer of officers) {
+        if (officer.user.telegramId && officer.user.notificationSettings?.clanApplications) {
+            await this.telegram.sendMessage(officer.user.telegramId, message);
+        }
+    }
+
+    // Notify Group
+    if (app.clan.telegramGroupId) {
+        const keyboard = Markup.inlineKeyboard([
+            [
+                Markup.button.callback('👍 0', `app_vote:${app.id}:like`),
+                Markup.button.callback('👎 0', `app_vote:${app.id}:dislike`)
+            ]
+        ]);
+        const groupMessage = await this.telegram.sendMessage(app.clan.telegramGroupId, message, {
+            ...keyboard,
+            message_thread_id: app.clan.telegramThreadId
+        });
+        
+        if (groupMessage && !app.clan.telegramThreadId) {
+            await this.telegram.pinMessage(app.clan.telegramGroupId, groupMessage.message_id);
+        }
+    }
   }
 
   async processApplication(userId: string, clanId: string, appId: string, dto: UpdateApplicationDto) {
      await this.checkPermission(userId, clanId, 'MEMBER_INVITE');
      
-     const app = await this.prisma.clanApplication.findUnique({ where: { id: appId } });
+     const app = await this.prisma.clanApplication.findUnique({ 
+         where: { id: appId },
+         include: { character: { include: { user: { include: { notificationSettings: true } } } }, clan: true }
+     });
      if (!app) throw new NotFoundException('Application not found');
      
      if (app.status !== 'PENDING') {
@@ -147,6 +201,10 @@ export class ClansService {
      if (dto.decision === ApplicationDecision.REJECT) {
          await this.prisma.clanApplication.update({ where: { id: appId }, data: { status: 'REJECTED' } });
          await this.audit.log(clanId, await this.getActorId(userId), 'REJECT_APPLICATION', `App ${appId}`);
+         
+         if (app.character.user.telegramId && app.character.user.notificationSettings?.applicationDecision) {
+             await this.telegram.sendMessage(app.character.user.telegramId, `Ваша заявка в клан ${app.clan.name} была отклонена.`);
+         }
      } else {
          await this.prisma.$transaction([
              this.prisma.clanApplication.update({ where: { id: appId }, data: { status: 'APPROVED' } }),
@@ -160,6 +218,10 @@ export class ClansService {
              })
          ]);
          await this.audit.log(clanId, await this.getActorId(userId), 'APPROVE_APPLICATION', `App ${appId}`);
+
+         if (app.character.user.telegramId && app.character.user.notificationSettings?.applicationDecision) {
+             await this.telegram.sendMessage(app.character.user.telegramId, `Поздравляем! Ваша заявка в клан ${app.clan.name} была принята!`);
+         }
      }
   }
 
@@ -169,27 +231,33 @@ export class ClansService {
       const clan = await this.prisma.clan.findUnique({ where: { id: clanId } });
       const currentSettings = clan.settings as any;
       
+      const { telegramGroupId, telegramThreadId, ...settingsDto } = dto;
+
       const newSettings = {
           ...currentSettings,
-          ...dto,
+          ...settingsDto,
           obligations: {
               ...(currentSettings.obligations || {}),
-              ...(dto.obligations || {})
+              ...(settingsDto.obligations || {})
           }
       };
       
-      if (dto.obligations?.forbiddenKnowledge) {
+      if (settingsDto.obligations?.forbiddenKnowledge) {
           newSettings.obligations.forbiddenKnowledge = {
               ...currentSettings.obligations.forbiddenKnowledge,
-              ...dto.obligations.forbiddenKnowledge
+              ...settingsDto.obligations.forbiddenKnowledge
           };
       }
-      if (dto.obligations?.clanHall) {
+      if (settingsDto.obligations?.clanHall) {
           newSettings.obligations.clanHall = {
               ...currentSettings.obligations.clanHall,
-              ...dto.obligations.clanHall
+              ...settingsDto.obligations.clanHall
           };
       }
+
+      // Remove telegram fields from settings if they somehow got there
+      delete (newSettings as any).telegramGroupId;
+      delete (newSettings as any).telegramThreadId;
 
       const changes: any = {};
       try {
@@ -210,7 +278,11 @@ export class ClansService {
 
       const updated = await this.prisma.clan.update({
           where: { id: clanId },
-          data: { settings: newSettings }
+          data: { 
+              settings: newSettings,
+              telegramGroupId,
+              telegramThreadId
+          }
       });
       await this.audit.log(clanId, await this.getActorId(userId), 'UPDATE_SETTINGS', 'Settings', changes);
       return updated;
@@ -256,6 +328,50 @@ export class ClansService {
          include: { clanHall: { include: { progress: true } } }
      });
      return context?.clanHall || null;
+  }
+
+  async markClanHallAttendance(userId: string, clanId: string, characterId: string, stage: number, valor: number, gold: number) {
+      // Find current week context
+      const now = new Date();
+      // ... simplified ISO week calculation (should match tasks.service)
+      const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+      const dayNum = d.getUTCDay() || 7;
+      d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+      const isoYear = d.getUTCFullYear();
+      const isoWeek = Math.ceil((((d.getTime() - (new Date(Date.UTC(isoYear, 0, 1))).getTime()) / 86400000) + 1) / 7);
+      const weekIso = `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
+
+      const context = await this.prisma.clanWeeklyContext.findUnique({
+          where: { clanId_weekIso: { clanId, weekIso } },
+          include: { clanHall: true }
+      });
+
+      if (!context || !context.clanHall) throw new BadRequestException('Weekly context or Clan Hall not found');
+
+      const progress = await this.prisma.clanHallProgress.create({
+          data: {
+              clanHallId: context.clanHall.id,
+              characterId,
+              stage,
+              valor,
+              gold
+          },
+          include: {
+              character: { include: { user: { include: { notificationSettings: true } } } },
+              clanHall: { include: { clanWeeklyContext: { include: { clan: true } } } }
+          }
+      });
+
+      // Notify character
+      if (progress.character.user.telegramId && progress.character.user.notificationSettings?.attendanceMarking) {
+          const clanName = progress.clanHall.clanWeeklyContext.clan.name;
+          await this.telegram.sendMessage(
+              progress.character.user.telegramId,
+              `Вам проставлено посещение этапа КХ в клане <b>${clanName}</b>.\nПерсонаж: <code>${progress.character.name}</code>\nЭтап: ${stage}\nДоблесть: ${valor}\nЗолото: ${gold}`
+          );
+      }
+
+      return progress;
   }
   
 

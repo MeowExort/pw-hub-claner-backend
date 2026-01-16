@@ -37,7 +37,10 @@ export class UsersService {
 
         const existing = await this.prisma.user.findUnique({
             where: {id},
-            include: {characters: {orderBy: {name: 'asc'}}},
+            include: {
+                characters: {orderBy: {name: 'asc'}},
+                notificationSettings: true
+            },
         });
         if (existing) return existing;
 
@@ -48,8 +51,14 @@ export class UsersService {
                 data: {
                     id,
                     username,
+                    notificationSettings: {
+                        create: {}
+                    }
                 },
-                include: {characters: {orderBy: {name: 'asc'}}},
+                include: {
+                    characters: {orderBy: {name: 'asc'}},
+                    notificationSettings: true
+                },
             });
         } catch (e) {
             // Handle unique constraint violation (likely username)
@@ -57,20 +66,72 @@ export class UsersService {
             return await this.prisma.user.create({
                 data: {
                     id,
-                    username: newUsername
+                    username: newUsername,
+                    notificationSettings: {
+                        create: {}
+                    }
                 },
-                include: {characters: {orderBy: {name: 'asc'}}},
+                include: {
+                    characters: {orderBy: {name: 'asc'}},
+                    notificationSettings: true
+                },
             });
         }
+    }
+
+    async generateOtp(userId: string) {
+        const otp = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const expiresAt = new Date();
+        expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
+        return this.prisma.user.update({
+            where: { id: userId },
+            data: {
+                otpCode: otp,
+                otpExpiresAt: expiresAt,
+            },
+            select: {
+                otpCode: true,
+                otpExpiresAt: true,
+            },
+        });
+    }
+
+    async updateNotificationSettings(userId: string, dto: any) {
+        return this.prisma.notificationSettings.update({
+            where: { userId },
+            data: dto,
+        });
+    }
+
+    async getPublicCharacter(id: string) {
+        const char = await this.prisma.character.findFirst({
+            where: {
+                OR: [
+                    {id},
+                    {shortId: id}
+                ]
+            },
+            include: {clan: true}
+        });
+        if (!char) throw new NotFoundException('Персонаж не найден');
+        return char;
     }
 
     async getCurrentUser(userId: string) {
         const user = await this.prisma.user.findUnique({
             where: {id: userId},
-            include: {characters: true},
+            include: {
+                characters: true,
+                notificationSettings: true
+            },
         });
         if (!user) throw new NotFoundException('Пользователь не найден');
         return user;
+    }
+
+    private generateShortId(): string {
+        return Math.random().toString(36).substring(2, 8);
     }
 
     async createCharacter(userId: string, dto: CreateCharacterDto) {
@@ -80,6 +141,7 @@ export class UsersService {
                 ...dto,
                 gameCharId,
                 userId,
+                shortId: this.generateShortId(),
             },
         });
     }
