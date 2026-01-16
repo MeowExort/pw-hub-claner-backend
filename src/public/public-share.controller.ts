@@ -18,7 +18,8 @@ export class PublicShareController {
       
       const protocol = res.req.protocol;
       const host = res.req.get('host');
-      const baseUrl = `${protocol}://${host}/api`;
+      // В Telegram лучше передавать абсолютный URL с https, если мы на проде
+      const baseUrl = host.includes('localhost') ? `http://${host}/api` : `https://api.claner.pw-hub.ru/api`;
       const imageUrl = `${baseUrl}/public/share/character/${id}/image.svg`;
 
       const html = `
@@ -43,7 +44,7 @@ export class PublicShareController {
 
     <!-- Redirect to frontend -->
     <script>
-        window.location.href = "/c/${id}";
+        window.location.href = "https://claner.pw-hub.ru/c/${id}";
     </script>
 </head>
 <body>
@@ -70,7 +71,7 @@ export class PublicShareController {
     const height = 630;
 
     // Простая генерация SVG
-    return `
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -124,6 +125,7 @@ export class PublicShareController {
   <text x="${width - 60}" y="${height - 60}" font-family="Arial, sans-serif" font-size="18" text-anchor="end" fill="#555555">pw-hub.ru</text>
 </svg>
     `;
+    return svg;
   }
 
   private renderStatSvg(label: string, value: any, y: number) {
