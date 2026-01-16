@@ -68,6 +68,32 @@ export class TasksService {
             description: 'Генерирует shortId для всех персонажей, у которых его нет',
             execute: this.fixShortIdsLogic.bind(this),
         });
+
+        this.tasks.set('generate-short-ids', {
+            id: 'generate-short-ids',
+            name: 'Генерация shortId',
+            schedule: '0 0 * * *',
+            description: 'Генерирует новый shortId для персонажей, у которых shortId равен id (запускается раз в сутки)',
+            execute: this.generateShortIdsLogic.bind(this),
+        });
+    }
+
+    private async generateShortIdsLogic() {
+        this.logger.log('Generating short IDs for characters where shortId == id...');
+        const chars = await this.prisma.character.findMany({
+            select: { id: true, shortId: true }
+        });
+
+        const toUpdate = chars.filter(c => c.shortId === c.id);
+
+        for (const char of toUpdate) {
+            const shortId = Math.random().toString(36).substring(2, 8);
+            await this.prisma.character.update({
+                where: { id: char.id },
+                data: { shortId }
+            });
+        }
+        this.logger.log(`Generated ${toUpdate.length} new short IDs.`);
     }
 
     private async fixShortIdsLogic() {
@@ -219,6 +245,11 @@ export class TasksService {
             });
         }
         this.logger.log('DB Populated.');
+    }
+
+    @Cron('0 0 * * *')
+    async dailyTasks() {
+        await this.runTask('generate-short-ids');
     }
 
     @Cron('* * * * *')
