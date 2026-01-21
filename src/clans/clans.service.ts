@@ -158,7 +158,8 @@ export class ClansService {
 
     const baseUrl = process.env.FRONTEND_URL || 'https://claner.pw-hub.ru';
     const characterLink = `\n<a href="${baseUrl}/c/${app.character.shortId || app.character.id}">Профиль персонажа</a>`;
-    const message = `<b>Новая заявка в клан ${app.clan.name}</b>\nОт: <code>${app.character.name}</code> (${app.character.class})${characterLink}\nСообщение: ${app.message}`;
+    const messageText = app.message ? app.message : '<i>(без сообщения)</i>';
+    const message = `<b>Новая заявка в клан ${app.clan.name}</b>\nОт: <code>${app.character.name}</code> (${app.character.class})${characterLink}\nСообщение: ${messageText}`;
 
     for (const officer of officers) {
         if (officer.user.telegramId && officer.user.notificationSettings?.clanApplications) {

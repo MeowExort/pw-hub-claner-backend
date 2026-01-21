@@ -246,7 +246,7 @@ model ClanApplication {
   clanId      String
   character   Character @relation(fields: [characterId], references: [id])
   characterId String
-  message     String
+  message     String?
   status      String
   createdDate DateTime  @default(now())
 
