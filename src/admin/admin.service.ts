@@ -119,25 +119,37 @@ export class AdminService {
   }
 
   async deleteClan(id: string) {
-    // В Prisma нужно сначала удалить связанные записи, если нет каскадного удаления в схеме.
-    // Судя по схеме, явных onDelete: Cascade нет.
-    
-    // Но для простоты (и если бд настроена правильно), попробуем просто удалить.
-    // Если упадет из-за связей, придется чистить вручную.
-    
-    // Но лучше сначала очистить ключевые связи.
+    // Очищаем все связанные данные в правильном порядке, чтобы не нарушать целостность (Foreign Key Constraints)
     await this.prisma.$transaction([
+      // 1. События и их участники/отряды
       this.prisma.eventParticipant.deleteMany({ where: { event: { clanWeeklyContext: { clanId: id } } } }),
       this.prisma.squad.deleteMany({ where: { event: { clanWeeklyContext: { clanId: id } } } }),
       this.prisma.event.deleteMany({ where: { clanWeeklyContext: { clanId: id } } }),
+      
+      // 2. Данные Кланхолла
+      this.prisma.clanHallProgress.deleteMany({ where: { clanHall: { clanWeeklyContext: { clanId: id } } } }),
+      this.prisma.clanHall.deleteMany({ where: { clanWeeklyContext: { clanId: id } } }),
+      
+      // 3. Другие еженедельные записи
+      this.prisma.rhythm.deleteMany({ where: { clanWeeklyContext: { clanId: id } } }),
+      this.prisma.forbiddenKnowledge.deleteMany({ where: { clanWeeklyContext: { clanId: id } } }),
+      
+      // 4. Сам контекст
       this.prisma.clanWeeklyContext.deleteMany({ where: { clanId: id } }),
+      
+      // 5. Заявки, история и аудит
+      this.prisma.applicationVote.deleteMany({ where: { application: { clanId: id } } }),
       this.prisma.clanApplication.deleteMany({ where: { clanId: id } }),
       this.prisma.factionHistory.deleteMany({ where: { clanId: id } }),
       this.prisma.auditLog.deleteMany({ where: { clanId: id } }),
+      
+      // 6. Отвязка персонажей
       this.prisma.character.updateMany({
         where: { clanId: id },
         data: { clanId: null, clanRole: null, clanJoinDate: null },
       }),
+      
+      // 7. Удаление самого клана
       this.prisma.clan.delete({ where: { id } }),
     ]);
     
