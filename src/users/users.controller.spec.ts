@@ -61,7 +61,7 @@ describe('UsersController', () => {
         name: 'CharName',
         server: 'Центавр',
         class: 'Воин',
-        pwobsLink: 'https://pwobs.com/centaur/players/12345',
+        pwobsLink: 'https://pwobs.ru/centaur/players/12345',
       };
       await controller.createCharacter(req, dto);
       expect(usersService.createCharacter).toHaveBeenCalledWith('user-id', dto);
