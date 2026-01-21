@@ -9,6 +9,7 @@ import { ClansModule } from './clans/clans.module';
 import { AuditModule } from './audit/audit.module';
 import { TasksModule } from './tasks/tasks.module';
 import { TelegramModule } from './telegram/telegram.module';
+import { AdminModule } from './admin/admin.module';
 import { PublicShareController } from './public/public-share.controller';
 
 @Module({
@@ -23,6 +24,7 @@ import { PublicShareController } from './public/public-share.controller';
     AuditModule,
     TasksModule,
     TelegramModule,
+    AdminModule,
   ],
   controllers: [PublicShareController],
 })
