@@ -236,7 +236,7 @@ export class UsersService {
 
     private extractGameCharId(link?: string): string {
         if (!link) return '';
-        const match = link.match(/pwobs\.com\/[^/]+\/players\/([^/?]+)/);
+        const match = link.match(/pwobs\.ru\/[^/]+\/players\/([^/?]+)/);
         return match ? match[1] : '';
     }
 
