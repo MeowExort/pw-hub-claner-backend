@@ -419,6 +419,40 @@ export class ClansService {
     });
   }
 
+  async kickMember(userId: string, clanId: string, memberId: string) {
+    const ROLE_HIERARCHY: Record<string, number> = {
+      MASTER: 4,
+      MARSHAL: 3,
+      OFFICER: 2,
+      PL: 1,
+      MEMBER: 0
+    };
+
+    await this.checkPermission(userId, clanId, 'CAN_KICK_MEMBERS');
+
+    const actorId = await this.getActorId(userId);
+    if (!actorId) throw new ForbiddenException('No character');
+
+    const actor = await this.prisma.character.findUnique({ where: { id: actorId } });
+    if (actor.clanId !== clanId) throw new ForbiddenException('Actor not in clan');
+
+    const target = await this.prisma.character.findUnique({ where: { id: memberId } });
+    if (!target || target.clanId !== clanId) throw new NotFoundException('Member not found');
+
+    const actorLevel = ROLE_HIERARCHY[actor.clanRole] || 0;
+    const targetLevel = ROLE_HIERARCHY[target.clanRole] || 0;
+
+    // Cannot kick someone with higher or equal rank
+    if (targetLevel >= actorLevel) {
+        throw new ForbiddenException('Cannot kick member with equal or higher rank');
+    }
+
+    return this.prisma.character.update({
+        where: { id: memberId },
+        data: { clanId: null, clanRole: null }
+    });
+  }
+
   private async checkPermission(userId: string, clanId: string, requiredPerm: string) {
       const user = await this.prisma.user.findUnique({ where: { id: userId } });
       if (!user.mainCharacterId) throw new ForbiddenException('No character');

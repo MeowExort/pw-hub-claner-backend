@@ -14,16 +14,11 @@ export class CreateCharacterDto {
   @IsString()
   class: string;
 
-  @ApiProperty({ example: 'https://pwobs.com/centaur/players/12345', description: 'Ссылка на pwobs' })
+  @ApiPropertyOptional({ example: 'https://pwobs.com/centaur/players/12345', description: 'Ссылка на pwobs' })
   @IsString()
-  @IsNotEmpty()
-  @Matches(/^https:\/\/pwobs\.com\/[^/]+\/players\/[^/]+$/, { message: 'Ссылка должна быть формата https://pwobs.com/{server}/players/{id}' })
-  pwobsLink: string;
-
-  @ApiPropertyOptional({ example: 105, description: 'Уровень персонажа' })
-  @IsNumber()
   @IsOptional()
-  level?: number;
+  @Matches(/^https:\/\/pwobs\.com\/[^/]+\/players\/[^/]+$/, { message: 'Ссылка должна быть формата https://pwobs.com/{server}/players/{id}' })
+  pwobsLink?: string;
 
   @ApiPropertyOptional({ example: 15000, description: 'Мин. атака' })
   @IsNumber()

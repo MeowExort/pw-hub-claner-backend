@@ -192,7 +192,6 @@ export class TasksService {
                                 server: servers[0],
                                 class: cls,
                                 userId: user.id,
-                                level: 100,
                             }
                         });
                     }
@@ -220,7 +219,6 @@ export class TasksService {
                     userId: user.id,
                     clanId: clan.id,
                     clanRole: 'MEMBER',
-                    level: 100 + Math.floor(Math.random() * 5),
                 }
             });
 

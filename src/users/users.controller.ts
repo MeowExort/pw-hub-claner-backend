@@ -30,6 +30,12 @@ export class UsersController {
         return this.usersService.getPublicCharacter(id);
     }
 
+    @Get('public/characters/:id/history')
+    @ApiOperation({ summary: 'Получение публичной истории персонажа' })
+    getPublicCharacterHistory(@Param('id') id: string) {
+        return this.usersService.getCharacterHistory(id);
+    }
+
     @Post('me/otp')
     @ApiBearerAuth()
     @UseGuards(AuthGuard('jwt'))
@@ -98,5 +104,21 @@ export class UsersController {
     @ApiOperation({summary: 'Получение активности', description: 'Возвращает данные об активности пользователя'})
     getMyActivity(@Req() req, @Query('week') week?: string) {
         return this.usersService.getMyActivity(req.user.id, week);
+    }
+
+    @Get('characters/:id/history')
+    @ApiBearerAuth()
+    @UseGuards(AuthGuard('jwt'))
+    @ApiOperation({summary: 'Получение истории персонажа'})
+    getCharacterHistory(@Param('id') id: string) {
+        return this.usersService.getCharacterHistory(id);
+    }
+
+    @Put('characters/:id')
+    @ApiBearerAuth()
+    @UseGuards(AuthGuard('jwt'))
+    @ApiOperation({summary: 'Обновление персонажа (админское/клановое)', description: 'Обновляет данные персонажа другим пользователем'})
+    updateAnyCharacter(@Req() req, @Param('id') id: string, @Body() dto: UpdateCharacterDto) {
+        return this.usersService.updateCharacter(req.user.id, id, dto);
     }
 }

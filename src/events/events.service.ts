@@ -39,7 +39,7 @@ export class EventsService {
       return rolePerms.permissions.includes(permission);
   }
 
-  async findAll(actor: any) {
+  async findAll(actor: any, options: { limit?: number, offset?: number, history?: boolean } = {}) {
     if (!actor.clanId) return [];
     
     return this.prisma.event.findMany({
@@ -47,15 +47,17 @@ export class EventsService {
             clanWeeklyContext: {
                 clanId: actor.clanId
             },
-            date: { gte: new Date() }
+            date: options.history ? { lt: new Date() } : { gte: new Date() }
         },
         include: {
             participants: true,
             squads: true
         },
         orderBy: {
-            date: 'desc'
-        }
+            date: options.history ? 'desc' : 'asc'
+        },
+        take: options.limit,
+        skip: options.offset
     });
   }
 

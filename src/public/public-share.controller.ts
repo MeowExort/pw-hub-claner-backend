@@ -13,7 +13,7 @@ export class PublicShareController {
       const char = await this.usersService.getPublicCharacter(id);
       const powerDetails = calculatePowerDetails(char);
 
-      const title = `${char.name} - ${char.class} ${char.level} ур.`;
+      const title = `${char.name} - ${char.class}`;
       const description = `Боевая мощь: ${powerDetails.total.toLocaleString('ru-RU')}. Сервер: ${char.server}. Посмотри профиль персонажа на PW Hub!`;
       
       const protocol = res.req.protocol;
@@ -98,7 +98,7 @@ export class PublicShareController {
 
   <!-- Header -->
   <text x="60" y="100" font-family="Arial, sans-serif" font-size="48" font-weight="bold" fill="#ffffff" filter="url(#shadow)">${this.escapeXml(char.name)}</text>
-  <text x="60" y="160" font-family="Arial, sans-serif" font-size="24" fill="#bbbbbb">${char.class} • ${char.server} • ${char.level} ур.</text>
+  <text x="60" y="160" font-family="Arial, sans-serif" font-size="24" fill="#bbbbbb">${char.class} • ${char.server}</text>
 
   <!-- Power Section -->
   <rect x="700" y="80" width="440" height="200" rx="20" fill="#252832" stroke="#ff9e64" stroke-width="3" />

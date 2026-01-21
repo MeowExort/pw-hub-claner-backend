@@ -23,6 +23,8 @@ model User {
 
   notificationSettings NotificationSettings?
 
+  characterChanges CharacterHistory[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -49,7 +51,6 @@ model Character {
   gameCharId String  @default("")
 
   // Stats
-  level           Float @default(0)
   minAttack       Float @default(0)
   maxAttack       Float @default(0)
   critChance      Float @default(0)
@@ -84,6 +85,22 @@ model Character {
   applications ClanApplication[]
   auditLogs    AuditLog[]
   votes        ApplicationVote[]
+  history      CharacterHistory[]
+}
+
+model CharacterHistory {
+  id          String    @id @default(uuid())
+  character   Character @relation(fields: [characterId], references: [id])
+  characterId String
+
+  changedBy   User   @relation(fields: [changedById], references: [id])
+  changedById String
+
+  oldData  Json
+  newData  Json
+  snapshot Json?
+
+  createdAt DateTime @default(now())
 }
 
 model Clan {

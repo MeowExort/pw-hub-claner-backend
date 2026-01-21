@@ -146,26 +146,96 @@ export class UsersService {
         });
     }
 
-    async updateCharacter(userId: string, characterId: string, dto: any) {
+    async updateCharacter(actorUserId: string, characterId: string, dto: any) {
         const char = await this.prisma.character.findUnique({
             where: {id: characterId},
+            include: {clan: true}
         });
 
-        if (!char || char.userId !== userId) {
-            throw new NotFoundException('Персонаж не найден или не принадлежит вам');
+        if (!char) {
+            throw new NotFoundException('Персонаж не найден');
         }
 
-        if (dto.pwobsLink) {
+        const actor = await this.prisma.user.findUnique({
+            where: {id: actorUserId},
+            include: {characters: true}
+        });
+
+        const isOwner = char.userId === actorUserId;
+        let hasClanPermission = false;
+
+        if (!isOwner && char.clanId) {
+            const permissions = await this.getMyPermissions(actorUserId);
+            if (permissions.includes(ClanPermission.CAN_EDIT_CHARACTERS)) {
+                hasClanPermission = true;
+            }
+        }
+
+        if (!isOwner && !hasClanPermission) {
+            throw new BadRequestException('У вас нет прав для редактирования этого персонажа');
+        }
+
+        if (dto.pwobsLink !== undefined) {
             dto.gameCharId = this.extractGameCharId(dto.pwobsLink);
         }
 
-        return this.prisma.character.update({
-            where: {id: characterId},
-            data: dto,
+        // Подготовка данных для истории
+        const oldData: any = {};
+        const newData: any = {};
+        let hasChanges = false;
+
+        for (const key in dto) {
+            if (char[key] !== dto[key]) {
+                oldData[key] = char[key];
+                newData[key] = dto[key];
+                hasChanges = true;
+            }
+        }
+
+        if (!hasChanges) {
+            return char;
+        }
+
+        return this.prisma.$transaction(async (tx) => {
+            const updated = await tx.character.update({
+                where: {id: characterId},
+                data: dto,
+            });
+
+            // Создаем снимок после обновления (включаем все поля персонажа)
+            const snapshot = {...updated};
+            delete snapshot.id; // Можно оставить или удалить ID, обычно в снимке он не нужен как часть данных
+            
+            await tx.characterHistory.create({
+                data: {
+                    characterId,
+                    changedById: actorUserId,
+                    oldData,
+                    newData,
+                    snapshot,
+                }
+            });
+
+            return updated;
         });
     }
 
-    private extractGameCharId(link: string): string {
+    async getCharacterHistory(characterId: string) {
+        return this.prisma.characterHistory.findMany({
+            where: {characterId},
+            include: {
+                changedBy: {
+                    include: {
+                        characters: true
+                    }
+                }
+            },
+            orderBy: {createdAt: 'desc'}
+        });
+    }
+
+    private extractGameCharId(link?: string): string {
+        if (!link) return '';
         const match = link.match(/pwobs\.com\/[^/]+\/players\/([^/?]+)/);
         return match ? match[1] : '';
     }

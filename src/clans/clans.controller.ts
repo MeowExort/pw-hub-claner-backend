@@ -130,6 +130,19 @@ export class ClansController {
       return this.clansService.changeMemberRole(req.user.id, id, memberId, dto.role);
   }
 
+  @Delete(':id/members/:memberId')
+  @UseGuards(AuthGuard('jwt'), PermissionsGuard)
+  @RequirePermissions(ClanPermission.CAN_KICK_MEMBERS)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Kick member from clan' })
+  kickMember(
+      @Req() req,
+      @Param('id') id: string,
+      @Param('memberId') memberId: string
+  ) {
+      return this.clansService.kickMember(req.user.id, id, memberId);
+  }
+
   @Post(':id/templates')
   @UseGuards(AuthGuard('jwt'), PermissionsGuard)
   @RequirePermissions(ClanPermission.CAN_EDIT_SETTINGS)

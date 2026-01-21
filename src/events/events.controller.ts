@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Put, Patch, Delete, UseGuards, Req, BadRequestException, ParseArrayPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Patch, Delete, UseGuards, Req, BadRequestException, ParseArrayPipe, Query } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { RsvpDto } from './dto/rsvp.dto';
@@ -19,8 +19,12 @@ export class EventsController {
   @Get()
   @ApiOperation({ summary: 'Получение всех событий', description: 'Возвращает список всех клановых событий' })
   @ApiResponse({ status: 200, description: 'Список событий' })
-  findAll(@Req() req) {
-    return this.eventsService.findAll(req.character);
+  findAll(@Req() req, @Query('limit') limit?: string, @Query('offset') offset?: string, @Query('history') history?: string) {
+    return this.eventsService.findAll(req.character, {
+        limit: limit ? parseInt(limit, 10) : undefined,
+        offset: offset ? parseInt(offset, 10) : undefined,
+        history: history === 'true'
+    });
   }
 
   @Get(':id')
