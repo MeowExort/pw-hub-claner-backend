@@ -120,6 +120,8 @@ export class ClansService {
         orderBy: { date: 'asc' }
     });
 
+    const characterIds = members.map(m => m.id);
+
     // 2. Get current week data for pveActivity
     const d = new Date();
     const dayNum = d.getUTCDay() || 7;
@@ -131,13 +133,50 @@ export class ClansService {
     const weekContext = await this.prisma.clanWeeklyContext.findUnique({
         where: { clanId_weekIso: { clanId, weekIso: currentWeekIso } },
         include: {
-            rhythmRecords: true,
-            forbiddenKnowledgeRecords: true,
-            clanHall: { include: { progress: true } }
+            rhythmRecords: { where: { characterId: { in: characterIds } } },
+            forbiddenKnowledgeRecords: { where: { characterId: { in: characterIds } } },
+            clanHall: { 
+                include: { 
+                    progress: true
+                } 
+            }
         }
     });
 
     const obligations = settings?.obligations;
+
+    // Pre-calculate full stage close times if needed
+    const fullStageCloses = new Map<number, Date>();
+    if (obligations?.clanHall?.required && weekContext?.clanHall) {
+        const allKhProgress = weekContext.clanHall.progress;
+        for (let i = 1; i <= 6; i++) {
+            let times: number[] = [];
+            const stageRecords = allKhProgress
+                .filter(p => p.stage === i)
+                .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+            if (stageRecords.length >= 120) {
+                times.push(stageRecords[119].createdAt.getTime());
+            }
+            const nextStageRecords = allKhProgress
+                .filter(p => p.stage > i)
+                .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+            if (nextStageRecords.length > 0) {
+                if (stageRecords.length > 0 && stageRecords.length < 120) {
+                    const tempKhStages = stageRecords.filter( p => p.createdAt.getTime() < nextStageRecords[0].createdAt.getTime());
+                    if (tempKhStages.length > 0) {
+                        times.push(tempKhStages[tempKhStages.length - 1].createdAt.getTime());
+                    } else {
+                        times.push(nextStageRecords[0].createdAt.getTime());
+                    }
+                } else {
+                    times.push(nextStageRecords[0].createdAt.getTime());
+                }
+            }
+            if (times.length > 0) {
+                fullStageCloses.set(i, new Date(Math.min(...times)));
+            }
+        }
+    }
 
     for (const member of members) {
         // Attendance Rate
@@ -192,53 +231,11 @@ export class ClansService {
                 if (requiredStages.length > 0) {
                     let mandatoryAttended = 0;
                     
-                    // Pre-calculate full stage close times
-                    const fullStageCloses = new Map<number, Date>();
-                    const allKhProgress = weekContext.clanHall?.progress || [];
-
-                    for (let i = 1; i <= 6; i++) {
-                        let times: number[] = [];
-                        
-                        // Time by 120th contribution
-                        const stageRecords = allKhProgress
-                            .filter(p => p.stage === i)
-                            .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-                        if (stageRecords.length >= 120) {
-                            times.push(stageRecords[119].createdAt.getTime());
-                        }
-
-                        // Time by any higher stage start
-                        const nextStageRecords = allKhProgress
-                            .filter(p => p.stage > i)
-                            .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-                        if (nextStageRecords.length > 0) {
-                            if (stageRecords.length > 0 && stageRecords.length < 120) {
-                                const tempKhStages = stageRecords.filter( p => p.createdAt.getTime() < nextStageRecords[0].createdAt.getTime());
-                                if (tempKhStages.length > 0) {
-                                    times.push(tempKhStages[tempKhStages.length - 1].createdAt.getTime());
-                                } else {
-                                    times.push(nextStageRecords[0].createdAt.getTime());
-                                }
-                            } else {
-                                times.push(nextStageRecords[0].createdAt.getTime());
-                            }
-                        }
-
-                        if (times.length > 0) {
-                            fullStageCloses.set(i, new Date(Math.min(...times)));
-                        }
-                    }
-
                     requiredStages.forEach((stage: number) => {
-                        // Find if member attended this stage on the day it was the active stage
-                        // We use the first attendance for this stage to be fair
                         const attendance = memberKh.find(p => p.stage === stage);
-
                         let success = false;
                         if (attendance) {
                             const attendanceTime = attendance.createdAt.getTime();
-                            
-                            // Active stage is the highest stage S whose PREVIOUS stage (S-1) was closed before attendanceTime
                             let activeStageAtTime = 1;
                             for (let s = 1; s <= 6; s++) {
                                 const prevStageClose = fullStageCloses.get(s);
@@ -246,7 +243,6 @@ export class ClansService {
                                     activeStageAtTime = s + 1;
                                 }
                             }
-
                             if (stage === activeStageAtTime) {
                                 mandatoryAttended++;
                                 success = true;
@@ -254,7 +250,6 @@ export class ClansService {
                         }
                         pveDetails.kh.push({ stage, attended: success });
                     });
-
                     pveMetrics.push(Math.min(100, (mandatoryAttended / requiredStages.length) * 100));
                 } else {
                     pveMetrics.push(memberKh.length > 0 ? 100 : 0);
@@ -266,7 +261,7 @@ export class ClansService {
             if (obligations.rhythmRequired) {
                 const record = weekContext.rhythmRecords.find(r => r.characterId === member.id);
                 const valor = record?.valor || 0;
-                const attended = Math.min(100, (valor / 14) * 100); // 14 is 100%
+                const attended = Math.min(100, (valor / 14) * 100);
                 pveMetrics.push(attended);
                 pveDetails.rhythm = {
                     valor,

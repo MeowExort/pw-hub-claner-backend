@@ -27,6 +27,8 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([username])
 }
 
 model NotificationSettings {
@@ -39,6 +41,8 @@ model NotificationSettings {
   attendanceMarking   Boolean @default(true)
   pvpEventCreated     Boolean @default(true)
   pvpEventRally       Boolean @default(true)
+
+  @@index([userId])
 }
 
 model Character {
@@ -86,6 +90,9 @@ model Character {
   auditLogs    AuditLog[]
   votes        ApplicationVote[]
   history      CharacterHistory[]
+
+  @@index([userId])
+  @@index([clanId])
 }
 
 model CharacterHistory {
@@ -101,6 +108,8 @@ model CharacterHistory {
   snapshot Json?
 
   createdAt DateTime @default(now())
+
+  @@index([characterId])
 }
 
 model Clan {
@@ -142,6 +151,8 @@ model ClanWeeklyContext {
   events                    Event[]
 
   @@unique([clanId, weekIso])
+  @@index([clanId])
+  @@index([weekIso])
 }
 
 model Rhythm {
@@ -155,6 +166,8 @@ model Rhythm {
   updatedAt         DateTime          @updatedAt
 
   @@unique([contextId, characterId])
+  @@index([characterId])
+  @@index([contextId])
 }
 
 model ForbiddenKnowledge {
@@ -168,6 +181,8 @@ model ForbiddenKnowledge {
   updatedAt         DateTime          @updatedAt
 
   @@unique([contextId, characterId])
+  @@index([characterId])
+  @@index([contextId])
 }
 
 model ClanHall {
@@ -176,6 +191,8 @@ model ClanHall {
   contextId         String            @unique
 
   progress ClanHallProgress[]
+
+  @@index([contextId])
 }
 
 model ClanHallProgress {
@@ -190,6 +207,8 @@ model ClanHallProgress {
   createdAt   DateTime  @default(now())
 
   @@unique([clanHallId, characterId, stage, createdAt])
+  @@index([clanHallId])
+  @@index([characterId])
 }
 
 model Event {
@@ -215,6 +234,10 @@ model Event {
 
   participants EventParticipant[]
   squads       Squad[]
+
+  @@index([contextId])
+  @@index([date])
+  @@index([status])
 }
 
 model EventParticipant {
@@ -231,6 +254,8 @@ model EventParticipant {
   telegramRallyMessageId String?
 
   @@unique([eventId, characterId])
+  @@index([eventId])
+  @@index([characterId])
 }
 
 model Squad {
@@ -242,6 +267,8 @@ model Squad {
   members               String[]
   feedbackSubmitted     Boolean  @default(false)
   startNotificationSent Boolean  @default(false)
+
+  @@index([eventId])
 }
 
 model ClanApplication {
@@ -255,6 +282,10 @@ model ClanApplication {
   createdDate DateTime  @default(now())
 
   votes ApplicationVote[]
+
+  @@index([clanId])
+  @@index([characterId])
+  @@index([status])
 }
 
 model ApplicationVote {
@@ -266,6 +297,8 @@ model ApplicationVote {
   vote          Int // 1 for upvote, -1 for downvote
 
   @@unique([applicationId, characterId])
+  @@index([applicationId])
+  @@index([characterId])
 }
 
 model FactionHistory {
@@ -283,6 +316,7 @@ model FactionHistory {
   createdAt   DateTime @default(now())
 
   @@unique([clanId, recordId])
+  @@index([clanId])
 }
 
 model AuditLog {
@@ -295,6 +329,9 @@ model AuditLog {
   target    String?
   details   Json?
   createdAt DateTime   @default(now())
+
+  @@index([clanId])
+  @@index([actorId])
 }
 
 model TaskLog {
@@ -306,4 +343,7 @@ model TaskLog {
   startedAt DateTime  @default(now())
   endedAt   DateTime?
   duration  Int?
+
+  @@index([taskName])
+  @@index([status])
 }

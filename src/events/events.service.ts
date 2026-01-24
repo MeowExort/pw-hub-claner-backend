@@ -146,8 +146,8 @@ export class EventsService {
       
       await this.audit.log(actor.clanId, actor.id, 'CREATE_EVENT', event.name);
 
-      // Notify members
-      await this.notifyMembersAboutEvent(event);
+      // Notify members in background
+      this.notifyMembersAboutEvent(event).catch(() => {});
 
       return event;
   }
@@ -164,7 +164,8 @@ export class EventsService {
     
     const baseMessage = `<b>Новое событие: ${event.name}</b>\nТип: ${event.type}\nДата: ${dateStr}\nСбор: ${rallyStr}\n${event.description ? `\n${event.description}` : ''}`;
 
-    for (const member of members) {
+    // Process each member in background
+    members.forEach(member => {
         if (member.user.telegramId && member.user.notificationSettings?.pvpEventCreated) {
             const personalMessage = baseMessage + `\n\nПерсонаж: <code>${member.name}</code>`;
             const memberKeyboard = Markup.inlineKeyboard([
@@ -173,30 +174,32 @@ export class EventsService {
                     Markup.button.callback('❌ Не пойду', `event_rsvp:${event.id}:${member.shortId || member.id}:NOT_GOING`)
                 ]
             ]);
-            const sent = await this.telegram.sendMessage(member.user.telegramId, personalMessage, memberKeyboard);
-            if (sent) {
-                await this.prisma.eventParticipant.upsert({
-                    where: {
-                        eventId_characterId: {
+            
+            this.telegram.sendMessage(member.user.telegramId, personalMessage, memberKeyboard).then(sent => {
+                if (sent) {
+                    this.prisma.eventParticipant.upsert({
+                        where: {
+                            eventId_characterId: {
+                                eventId: event.id,
+                                characterId: member.id
+                            }
+                        },
+                        create: {
                             eventId: event.id,
-                            characterId: member.id
+                            characterId: member.id,
+                            status: 'UNDECIDED',
+                            telegramMessageId: sent.message_id.toString()
+                        },
+                        update: {
+                            telegramMessageId: sent.message_id.toString()
                         }
-                    },
-                    create: {
-                        eventId: event.id,
-                        characterId: member.id,
-                        status: 'UNDECIDED',
-                        telegramMessageId: sent.message_id.toString()
-                    },
-                    update: {
-                        telegramMessageId: sent.message_id.toString()
-                    }
-                });
-            }
+                    }).catch(() => {});
+                }
+            }).catch(() => {});
         }
-    }
+    });
 
-    // Notify Group
+    // Notify Group in background
     if (clan.telegramGroupId) {
         const groupKeyboard = Markup.inlineKeyboard([
             [
@@ -204,19 +207,21 @@ export class EventsService {
                 Markup.button.callback('❌ Не пойду 0', `event_rsvp:${event.id}:NOT_GOING`)
             ]
         ]);
-        const groupMessage = await this.telegram.sendMessage(clan.telegramGroupId, baseMessage, {
+        this.telegram.sendMessage(clan.telegramGroupId, baseMessage, {
             ...groupKeyboard,
             message_thread_id: clan.telegramThreadId
-        });
-        if (groupMessage) {
-            await this.prisma.event.update({
-                where: { id: event.id },
-                data: { telegramGroupMessageId: groupMessage.message_id.toString() }
-            });
-            if (!clan.telegramThreadId) {
-                await this.telegram.pinMessage(clan.telegramGroupId, groupMessage.message_id);
+        }).then(groupMessage => {
+            if (groupMessage) {
+                this.prisma.event.update({
+                    where: { id: event.id },
+                    data: { telegramGroupMessageId: groupMessage.message_id.toString() }
+                }).then(() => {
+                    if (!clan.telegramThreadId) {
+                        this.telegram.pinMessage(clan.telegramGroupId, groupMessage.message_id).catch(() => {});
+                    }
+                }).catch(() => {});
             }
-        }
+        }).catch(() => {});
     }
   }
 
@@ -427,79 +432,80 @@ export class EventsService {
 
     await this.audit.log(actor.clanId, actor.id, 'UPDATE_SQUADS', event.name);
 
-    // Notify users about squad assignment
-    await this.notifyMembersAboutSquads(updated);
+    // Notify users about squad assignment in background
+    this.notifyMembersAboutSquads(updated).catch(() => {});
 
     return updated;
   }
 
   private async notifyMembersAboutSquads(event: any) {
-      const membersToNotify = new Map<string, { squadName: string, leaderName: string, squad: any }>();
+      const squadMembersMap = new Map<string, { squadName: string, leaderId: string, squad: any }>();
+      const allSquadMemberIds = new Set<string>();
 
       for (const squad of event.squads) {
-          let leaderName = 'Не указан';
-          if (squad.leaderId) {
-              const leader = await this.prisma.character.findUnique({ where: { id: squad.leaderId } });
-              leaderName = leader?.name || 'Не указан';
-          }
-
           for (const charId of squad.members) {
-              membersToNotify.set(charId, { squadName: squad.name, leaderName, squad });
+              squadMembersMap.set(charId, { squadName: squad.name, leaderId: squad.leaderId, squad });
+              allSquadMemberIds.add(charId);
           }
       }
 
-      for (const [charId, info] of membersToNotify.entries()) {
-          const participant = await this.prisma.eventParticipant.findUnique({
+      if (allSquadMemberIds.size === 0) return;
+
+      const [characters, participants] = await Promise.all([
+          this.prisma.character.findMany({
+              where: { id: { in: Array.from(allSquadMemberIds) } },
+              select: { id: true, name: true, shortId: true }
+          }),
+          this.prisma.eventParticipant.findMany({
               where: {
-                  eventId_characterId: {
-                      eventId: event.id,
-                      characterId: charId
-                  }
+                  eventId: event.id,
+                  characterId: { in: Array.from(allSquadMemberIds) }
               },
               include: {
                   character: { include: { user: { include: { notificationSettings: true } } } }
               }
-          });
+          })
+      ]);
 
-          if (participant?.character?.user?.telegramId && participant.telegramMessageId) {
-              const dateStr = new Date(event.date).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
-              const rallyStr = event.rallyTime ? new Date(event.rallyTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' }) : 'не указано';
-              
-              let message = `<b>Новое событие: ${event.name}</b>\nТип: ${event.type}\nДата: ${dateStr}\nСбор: ${rallyStr}\n${event.description ? `\n${event.description}` : ''}`;
-              
-              message += `\n\nПерсонаж: <code>${participant.character.name}</code>`;
+      const charNameMap = new Map(characters.map(c => [c.id, c.name]));
+      const dateStr = new Date(event.date).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+      const rallyStr = event.rallyTime ? new Date(event.rallyTime).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' }) : 'не указано';
+      const eventBaseInfo = `<b>Новое событие: ${event.name}</b>\nТип: ${event.type}\nДата: ${dateStr}\nСбор: ${rallyStr}\n${event.description ? `\n${event.description}` : ''}`;
 
-              const statusText = participant.status === 'GOING' ? 'Вы идете ✅' : (participant.status === 'NOT_GOING' ? 'Вы не идете ❌' : '');
-              if (statusText) {
-                  message += `\n\nСтатус: <b>${statusText}</b>`;
-              }
+      // Process notifications in background
+      participants.forEach(participant => {
+          const charId = participant.characterId;
+          const info = squadMembersMap.get(charId);
+          if (!info || !participant.character.user.telegramId || !participant.telegramMessageId) return;
 
-              message += `\n\nВас расписали в отряд!\nОтряд: <b>${info.squadName}</b>\nПЛ: <code>${info.leaderName}</code>`;
+          const leaderName = charNameMap.get(info.leaderId) || 'Не указан';
+          let message = eventBaseInfo + `\n\nПерсонаж: <code>${participant.character.name}</code>`;
 
-              // Generate copy string for PL
-              let copyExtra = '';
-              const squad = info.squad;
-              const isPL = participant.characterId === squad.leaderId;
-              if (isPL) {
-                  const memberNames = [];
-                  for (const mId of squad.members) {
-                      if (mId === squad.leaderId) continue;
-                      const mChar = await this.prisma.character.findUnique({ where: { id: mId } });
-                      memberNames.push(mChar?.name || 'Unknown');
-                  }
-                  const copyString = `${squad.name}: ${memberNames.join(', ')}`;
-                  copyExtra = `\n\n<b>Список для копирования:</b>\n<code>${copyString}</code>`;
-              }
-
-              const keyboard = Markup.inlineKeyboard([
-                  [
-                      Markup.button.callback('🔄 Изменить решение', `event_rsvp:${event.id}:${participant.character.shortId || charId}:${participant.status === 'GOING' ? 'NOT_GOING' : 'GOING'}`)
-                  ]
-              ]);
-
-              await this.telegram.editMessage(participant.character.user.telegramId, parseInt(participant.telegramMessageId), message + copyExtra, keyboard);
+          const statusText = participant.status === 'GOING' ? 'Вы идете ✅' : (participant.status === 'NOT_GOING' ? 'Вы не идете ❌' : '');
+          if (statusText) {
+              message += `\n\nСтатус: <b>${statusText}</b>`;
           }
-      }
+
+          message += `\n\nВас расписали в отряд!\nОтряд: <b>${info.squadName}</b>\nПЛ: <code>${leaderName}</code>`;
+
+          let copyExtra = '';
+          const isPL = charId === info.leaderId;
+          if (isPL) {
+              const memberNames = info.squad.members
+                  .filter(mId => mId !== info.leaderId)
+                  .map(mId => charNameMap.get(mId) || 'Unknown');
+              const copyString = `${info.squadName}: ${memberNames.join(', ')}`;
+              copyExtra = `\n\n<b>Список для копирования:</b>\n<code>${copyString}</code>`;
+          }
+
+          const keyboard = Markup.inlineKeyboard([
+              [
+                  Markup.button.callback('🔄 Изменить решение', `event_rsvp:${event.id}:${participant.character.shortId || charId}:${participant.status === 'GOING' ? 'NOT_GOING' : 'GOING'}`)
+              ]
+          ]);
+
+          this.telegram.editMessage(participant.character.user.telegramId, parseInt(participant.telegramMessageId), message + copyExtra, keyboard).catch(() => {});
+      });
   }
   
   async completeEvent(userId: string, eventId: string, reportUploaded: boolean) {
@@ -570,13 +576,14 @@ export class EventsService {
       const result = await this.prisma.$transaction(async (tx) => {
           // 1. Process attendance data and collect replacements to add to squads
           const replacementsToAdd: string[] = [];
+          const participantsToUpdate = [];
+          const participantsToCreate = [];
 
           for (const item of dto.attendanceData) {
               const existing = event.participants.find((p) => p.characterId === item.characterId);
 
               // 1.1 Move character if it's a replacement and attended
               if (item.isReplacement && item.attended) {
-                  // Find if character is in another squad
                   const otherSquad = event.squads.find(s => s.members.includes(item.characterId) && s.id !== dto.squadId);
                   if (otherSquad) {
                       const newMembers = otherSquad.members.filter(id => id !== item.characterId);
@@ -588,40 +595,46 @@ export class EventsService {
                               leaderId: isLeader ? '' : otherSquad.leaderId
                           }
                       });
-                      
-                      // Notify about squad update if gateway provided
-                      if (gateway) {
-                          const updatedSquads = await tx.squad.findMany({ where: { eventId } });
-                          gateway.server.to(`event_${eventId}`).emit('squadsUpdated', updatedSquads);
-                      }
                   }
                   replacementsToAdd.push(item.characterId);
               }
 
               if (existing) {
-                  await tx.eventParticipant.update({
-                      where: { id: existing.id },
+                  participantsToUpdate.push({
+                      id: existing.id,
                       data: {
                           attendance: item.attended,
                           isReplacement: item.isReplacement ?? existing.isReplacement,
-                          status: item.attended ? existing.status : 'NOT_GOING',
-                      },
+                          status: item.attended ? (existing.status === 'NOT_GOING' ? 'GOING' : existing.status) : 'NOT_GOING',
+                      }
                   });
               } else if (item.isReplacement) {
-                  await tx.eventParticipant.create({
-                      data: {
-                          eventId,
-                          characterId: item.characterId,
-                          status: item.attended ? 'GOING' : 'NOT_GOING', 
-                          attendance: item.attended,
-                          isReplacement: true,
-                      },
+                  participantsToCreate.push({
+                      eventId,
+                      characterId: item.characterId,
+                      status: item.attended ? 'GOING' : 'NOT_GOING', 
+                      attendance: item.attended,
+                      isReplacement: true,
                   });
               }
+          }
 
-              if (item.isReplacement && item.attended) {
-                  // replacementsToAdd.push(item.characterId); // Already added above in Step 1.1
-              }
+          // Bulk update existing participants
+          if (participantsToUpdate.length > 0) {
+              await Promise.all(participantsToUpdate.map(p => 
+                  tx.eventParticipant.update({
+                      where: { id: p.id },
+                      data: p.data
+                  })
+              ));
+          }
+
+          // Bulk create new participants
+          if (participantsToCreate.length > 0) {
+              await tx.eventParticipant.createMany({
+                  data: participantsToCreate,
+                  skipDuplicates: true
+              });
           }
 
           // 2. Mark squad(s) as submitted and add replacements to squads
@@ -632,8 +645,6 @@ export class EventsService {
               });
 
               if (replacementsToAdd.length > 0) {
-                  // If ALL, we put all replacements into a special "Донабор" squad
-                  // or distribute them? Prompt says "create special technical squad (e.g. 'Донабор')"
                   let donaborSquad = event.squads.find(s => s.name === 'Донабор');
                   if (donaborSquad) {
                       const newMembers = [...new Set([...donaborSquad.members, ...replacementsToAdd])];
@@ -686,42 +697,46 @@ export class EventsService {
               });
 
               // 4. Mark all unassigned clan members as NOT_GOING
+              const squadsWithMembers = await tx.squad.findMany({ where: { eventId } });
+              const assignedCharIds = new Set<string>();
+              squadsWithMembers.forEach(s => s.members.forEach(m => assignedCharIds.add(m)));
+
               const clanMembers = await tx.character.findMany({
                   where: {
                       clanId: event.clanWeeklyContext.clanId,
+                      id: { notIn: Array.from(assignedCharIds) },
                       OR: [
                           { clanJoinDate: null },
                           { clanJoinDate: { lte: event.date } }
                       ]
-                  }
+                  },
+                  select: { id: true }
               });
 
-              const assignedCharIds = new Set<string>();
-              const squadsWithMembers = await tx.squad.findMany({ where: { eventId } });
-              squadsWithMembers.forEach(s => s.members.forEach(m => assignedCharIds.add(m)));
+              if (clanMembers.length > 0) {
+                  const unassignedData = clanMembers.map(member => ({
+                      eventId,
+                      characterId: member.id,
+                      status: 'NOT_GOING',
+                      attendance: false,
+                      isReplacement: false
+                  }));
 
-              for (const member of clanMembers) {
-                  if (!assignedCharIds.has(member.id)) {
-                      await tx.eventParticipant.upsert({
-                          where: {
-                              eventId_characterId: {
-                                  eventId,
-                                  characterId: member.id
-                              }
-                          },
-                          create: {
-                              eventId,
-                              characterId: member.id,
-                              status: 'NOT_GOING',
-                              attendance: false,
-                              isReplacement: false
-                          },
-                          update: {
-                              status: 'NOT_GOING',
-                              attendance: false
-                          }
-                      });
-                  }
+                  await tx.eventParticipant.createMany({
+                      data: unassignedData,
+                      skipDuplicates: true
+                  });
+
+                  await tx.eventParticipant.updateMany({
+                      where: {
+                          eventId,
+                          characterId: { in: clanMembers.map(m => m.id) }
+                      },
+                      data: {
+                          status: 'NOT_GOING',
+                          attendance: false
+                      }
+                  });
               }
           }
 
@@ -730,11 +745,11 @@ export class EventsService {
               attendanceCount: dto.attendanceData.length,
           });
 
-          // Return updated squads for gateway broadcast
           return tx.squad.findMany({ where: { eventId } });
       });
 
       if (gateway) {
+          // Run in background to avoid blocking the response
           gateway.server.to(`event_${eventId}`).emit('squadsUpdated', result);
       }
 
