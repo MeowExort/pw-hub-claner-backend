@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { RsvpDto } from './dto/rsvp.dto';
 import { SquadDto } from './dto/squad.dto';
+import { EventFeedbackDto } from './dto/event-feedback.dto';
 import { ClanPermission } from '../common/constants/permissions';
 import { AuditService } from '../audit/audit.service';
 import { TelegramService } from '../telegram/telegram.service';
@@ -26,6 +27,9 @@ export class EventsService {
   ) {}
 
   hasPermission(character: any, permission: string): boolean {
+      console.log();
+      console.log();
+      console.log(character, permission);
       if (!character.clan || !character.clanRole) return false;
       if (character.clanRole === 'MASTER') return true;
       
@@ -42,13 +46,24 @@ export class EventsService {
   async findAll(actor: any, options: { limit?: number, offset?: number, history?: boolean } = {}) {
     if (!actor.clanId) return [];
     
+    const now = new Date();
+    const where: any = {
+        clanWeeklyContext: {
+            clanId: actor.clanId
+        }
+    };
+
+    if (options.history) {
+        where.date = { lt: now };
+    } else {
+        where.OR = [
+            { date: { gte: now } },
+            { feedbackSubmitted: false, date: { lt: now } }
+        ];
+    }
+    
     return this.prisma.event.findMany({
-        where: {
-            clanWeeklyContext: {
-                clanId: actor.clanId
-            },
-            date: options.history ? { lt: new Date() } : { gte: new Date() }
-        },
+        where,
         include: {
             participants: true,
             squads: true
@@ -253,40 +268,45 @@ export class EventsService {
   }
 
   async rsvp(userId: string, eventId: string, dto: RsvpDto) {
-      const event = await this.prisma.event.findUnique({
-          where: { id: eventId },
-          include: { clanWeeklyContext: { include: { clan: true } } }
-      });
-      if (!event) throw new NotFoundException('Event not found');
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: { clanWeeklyContext: { include: { clan: true } } },
+    });
+    if (!event) throw new NotFoundException('Event not found');
 
-      const user = await this.prisma.user.findUnique({ where: { id: userId }, include: { characters: true } });
-      const charId = user?.mainCharacterId;
-      if (!charId) throw new BadRequestException('No character');
-      
-      const character = user.characters.find(c => c.id === charId);
-      if (character.clanId !== event.clanWeeklyContext.clanId) throw new ForbiddenException('Not in clan');
-      
-      await this.prisma.eventParticipant.upsert({
-          where: {
-              eventId_characterId: {
-                  eventId,
-                  characterId: charId
-              }
-          },
-          create: {
-              eventId,
-              characterId: charId,
-              status: dto.status
-          },
-          update: {
-              status: dto.status
-          }
-      });
-      
-      // Trigger Telegram updates
-      await this.updateTelegramMessages(eventId, charId);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { characters: true },
+    });
+    const charId = user?.mainCharacterId;
+    if (!charId) throw new BadRequestException('No character selected');
 
-      return this.prisma.event.findUnique({ where: { id: eventId }, include: { participants: true } });
+    const character = user.characters.find((c) => c.id === charId);
+    if (!character || character.clanId !== event.clanWeeklyContext.clanId) {
+      throw new ForbiddenException('Character is not in the clan for this event');
+    }
+
+    await this.prisma.eventParticipant.upsert({
+      where: {
+        eventId_characterId: {
+          eventId,
+          characterId: charId,
+        },
+      },
+      create: {
+        eventId,
+        characterId: charId,
+        status: dto.status,
+      },
+      update: {
+        status: dto.status,
+      },
+    });
+
+    // Trigger Telegram updates
+    await this.updateTelegramMessages(eventId, charId);
+
+    return this.prisma.event.findUnique({ where: { id: eventId }, include: { participants: true } });
   }
 
   async updateTelegramMessages(eventId: string, characterId: string) {
@@ -369,40 +389,48 @@ export class EventsService {
   }
 
   async setSquads(userId: string, eventId: string, squads: SquadDto[], actor: any) {
-       const event = await this.prisma.event.findUnique({
-          where: { id: eventId },
-          include: { clanWeeklyContext: true }
-      });
-      if (!event) throw new NotFoundException('Event not found');
-      if (event.clanWeeklyContext.clanId !== actor.clanId) throw new ForbiddenException('Access denied');
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: { clanWeeklyContext: true },
+    });
+    if (!event) throw new NotFoundException('Event not found');
 
-      // Replace existing squads with the provided list using proper nested writes
-      const updated = await this.prisma.event.update({
-          where: { id: eventId },
-          data: {
-              squads: {
-                  // Remove all existing squads of this event
-                  deleteMany: {},
-                  // Create new squads from DTO
-                  create: squads.map(sq => ({
-                      name: sq.name || 'Unnamed Squad',
-                      leaderId: sq.leaderId || '',
-                      members: sq.members ?? []
-                  }))
-              }
-          },
-          include: {
-              squads: true,
-              clanWeeklyContext: { include: { clan: true } }
-          }
-      });
-  
-      await this.audit.log(actor.clanId, actor.id, 'UPDATE_SQUADS', event.name);
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.mainCharacterId) throw new BadRequestException('No active character selected');
 
-      // Notify users about squad assignment
-      await this.notifyMembersAboutSquads(updated);
+    // actor comes from PermissionsGuard, which uses mainCharacterId,
+    // so actor.id is already the mainCharacterId of the person making the request.
+    if (event.clanWeeklyContext.clanId !== actor.clanId) {
+      throw new ForbiddenException('Access denied: Event belongs to another clan');
+    }
 
-      return updated;
+    // Replace existing squads with the provided list using proper nested writes
+    const updated = await this.prisma.event.update({
+      where: { id: eventId },
+      data: {
+        squads: {
+          // Remove all existing squads of this event
+          deleteMany: {},
+          // Create new squads from DTO
+          create: squads.map((sq) => ({
+            name: sq.name || 'Unnamed Squad',
+            leaderId: sq.leaderId || '',
+            members: sq.members ?? [],
+          })),
+        },
+      },
+      include: {
+        squads: true,
+        clanWeeklyContext: { include: { clan: true } },
+      },
+    });
+
+    await this.audit.log(actor.clanId, actor.id, 'UPDATE_SQUADS', event.name);
+
+    // Notify users about squad assignment
+    await this.notifyMembersAboutSquads(updated);
+
+    return updated;
   }
 
   private async notifyMembersAboutSquads(event: any) {
@@ -475,27 +503,243 @@ export class EventsService {
   }
   
   async completeEvent(userId: string, eventId: string, reportUploaded: boolean) {
-       const event = await this.prisma.event.findUnique({
-          where: { id: eventId },
-          include: { clanWeeklyContext: true }
-      });
-      if (!event) throw new NotFoundException('Event not found');
-      
-      const user = await this.prisma.user.findUnique({ where: { id: userId } });
-      const charId = user?.mainCharacterId;
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      include: { clanWeeklyContext: true },
+    });
+    if (!event) throw new NotFoundException('Event not found');
 
-      const updated = await this.prisma.event.update({
-          where: { id: eventId },
-          data: {
-              status: reportUploaded ? 'COMPLETED' : 'ACTIVE'
-          }
-      });
-      
-      if (charId) {
-          await this.audit.log(event.clanWeeklyContext.clanId, charId, 'COMPLETE_EVENT', event.name);
-      }
-      return updated;
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const charId = user?.mainCharacterId;
+
+    if (!charId) throw new BadRequestException('No active character selected');
+
+    // Fetch character with clan to verify membership and permissions
+    const character = await this.prisma.character.findUnique({
+      where: { id: charId },
+      include: { clan: true },
+    });
+
+    if (!character || character.clanId !== event.clanWeeklyContext.clanId) {
+      throw new ForbiddenException('Access denied: Character not in clan');
     }
+
+    if (!this.hasPermission(character, ClanPermission.CAN_EDIT_EVENTS)) {
+      throw new ForbiddenException('Insufficient permissions to complete event');
+    }
+
+    const updated = await this.prisma.event.update({
+      where: { id: eventId },
+      data: {
+        status: reportUploaded ? 'COMPLETED' : 'ACTIVE',
+      },
+    });
+
+    await this.audit.log(event.clanWeeklyContext.clanId, charId, 'COMPLETE_EVENT', event.name);
+
+    return updated;
+  }
+
+  async submitFeedback(userId: string, eventId: string, dto: EventFeedbackDto, actor: any, gateway?: any) {
+      const event = await this.prisma.event.findUnique({
+          where: { id: eventId },
+          include: {
+              squads: true,
+              participants: true,
+              clanWeeklyContext: true,
+          },
+      });
+
+      if (!event) throw new NotFoundException('Event not found');
+      if (new Date(event.date) > new Date()) {
+          throw new BadRequestException('Cannot submit feedback for future event');
+      }
+
+      const isAdmin = this.hasPermission(actor, ClanPermission.CAN_EDIT_EVENTS);
+
+      if (dto.squadId === 'ALL') {
+          if (!isAdmin) throw new ForbiddenException('Only officers can submit feedback for all squads');
+      } else {
+          const squad = event.squads.find((s) => s.id === dto.squadId);
+          if (!squad) throw new NotFoundException('Squad not found');
+          if (!isAdmin && squad.leaderId !== actor.id) {
+              throw new ForbiddenException('Only squad leader or officer can submit feedback');
+          }
+      }
+
+      const result = await this.prisma.$transaction(async (tx) => {
+          // 1. Process attendance data and collect replacements to add to squads
+          const replacementsToAdd: string[] = [];
+
+          for (const item of dto.attendanceData) {
+              const existing = event.participants.find((p) => p.characterId === item.characterId);
+
+              // 1.1 Move character if it's a replacement and attended
+              if (item.isReplacement && item.attended) {
+                  // Find if character is in another squad
+                  const otherSquad = event.squads.find(s => s.members.includes(item.characterId) && s.id !== dto.squadId);
+                  if (otherSquad) {
+                      const newMembers = otherSquad.members.filter(id => id !== item.characterId);
+                      const isLeader = otherSquad.leaderId === item.characterId;
+                      await tx.squad.update({
+                          where: { id: otherSquad.id },
+                          data: {
+                              members: newMembers,
+                              leaderId: isLeader ? '' : otherSquad.leaderId
+                          }
+                      });
+                      
+                      // Notify about squad update if gateway provided
+                      if (gateway) {
+                          const updatedSquads = await tx.squad.findMany({ where: { eventId } });
+                          gateway.server.to(`event_${eventId}`).emit('squadsUpdated', updatedSquads);
+                      }
+                  }
+                  replacementsToAdd.push(item.characterId);
+              }
+
+              if (existing) {
+                  await tx.eventParticipant.update({
+                      where: { id: existing.id },
+                      data: {
+                          attendance: item.attended,
+                          isReplacement: item.isReplacement ?? existing.isReplacement,
+                          status: item.attended ? existing.status : 'NOT_GOING',
+                      },
+                  });
+              } else if (item.isReplacement) {
+                  await tx.eventParticipant.create({
+                      data: {
+                          eventId,
+                          characterId: item.characterId,
+                          status: item.attended ? 'GOING' : 'NOT_GOING', 
+                          attendance: item.attended,
+                          isReplacement: true,
+                      },
+                  });
+              }
+
+              if (item.isReplacement && item.attended) {
+                  // replacementsToAdd.push(item.characterId); // Already added above in Step 1.1
+              }
+          }
+
+          // 2. Mark squad(s) as submitted and add replacements to squads
+          if (dto.squadId === 'ALL') {
+              await tx.squad.updateMany({
+                  where: { eventId },
+                  data: { feedbackSubmitted: true },
+              });
+
+              if (replacementsToAdd.length > 0) {
+                  // If ALL, we put all replacements into a special "Донабор" squad
+                  // or distribute them? Prompt says "create special technical squad (e.g. 'Донабор')"
+                  let donaborSquad = event.squads.find(s => s.name === 'Донабор');
+                  if (donaborSquad) {
+                      const newMembers = [...new Set([...donaborSquad.members, ...replacementsToAdd])];
+                      await tx.squad.update({
+                          where: { id: donaborSquad.id },
+                          data: { members: newMembers }
+                      });
+                  } else {
+                      await tx.squad.create({
+                          data: {
+                              name: 'Донабор',
+                              eventId,
+                              leaderId: '',
+                              members: replacementsToAdd,
+                              feedbackSubmitted: true
+                          }
+                      });
+                  }
+              }
+          } else {
+              const squad = event.squads.find(s => s.id === dto.squadId);
+              if (squad && replacementsToAdd.length > 0) {
+                  const newMembers = [...new Set([...squad.members, ...replacementsToAdd])];
+                  await tx.squad.update({
+                      where: { id: dto.squadId },
+                      data: { 
+                          feedbackSubmitted: true,
+                          members: newMembers
+                      },
+                  });
+              } else {
+                  await tx.squad.update({
+                      where: { id: dto.squadId },
+                      data: { feedbackSubmitted: true },
+                  });
+              }
+          }
+
+          // 3. Check if all squads are submitted and update event status
+          const allSquads = await tx.squad.findMany({ where: { eventId } });
+          const allSubmitted = allSquads.every((s) => s.feedbackSubmitted);
+
+          if (allSubmitted || dto.squadId === 'ALL') {
+              await tx.event.update({
+                  where: { id: eventId },
+                  data: {
+                      feedbackSubmitted: true,
+                      status: 'COMPLETED',
+                  },
+              });
+
+              // 4. Mark all unassigned clan members as NOT_GOING
+              const clanMembers = await tx.character.findMany({
+                  where: {
+                      clanId: event.clanWeeklyContext.clanId,
+                      OR: [
+                          { clanJoinDate: null },
+                          { clanJoinDate: { lte: event.date } }
+                      ]
+                  }
+              });
+
+              const assignedCharIds = new Set<string>();
+              const squadsWithMembers = await tx.squad.findMany({ where: { eventId } });
+              squadsWithMembers.forEach(s => s.members.forEach(m => assignedCharIds.add(m)));
+
+              for (const member of clanMembers) {
+                  if (!assignedCharIds.has(member.id)) {
+                      await tx.eventParticipant.upsert({
+                          where: {
+                              eventId_characterId: {
+                                  eventId,
+                                  characterId: member.id
+                              }
+                          },
+                          create: {
+                              eventId,
+                              characterId: member.id,
+                              status: 'NOT_GOING',
+                              attendance: false,
+                              isReplacement: false
+                          },
+                          update: {
+                              status: 'NOT_GOING',
+                              attendance: false
+                          }
+                      });
+                  }
+              }
+          }
+
+          await this.audit.log(event.clanWeeklyContext.clanId, actor.id, 'EVENT_FEEDBACK', event.name, {
+              squadId: dto.squadId,
+              attendanceCount: dto.attendanceData.length,
+          });
+
+          // Return updated squads for gateway broadcast
+          return tx.squad.findMany({ where: { eventId } });
+      });
+
+      if (gateway) {
+          gateway.server.to(`event_${eventId}`).emit('squadsUpdated', result);
+      }
+
+      return { success: true };
+  }
 
     async delete(id: string, actor: any) {
         const event = await this.prisma.event.findUnique({

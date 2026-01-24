@@ -566,22 +566,31 @@ export class ClansHistoryService {
         if (!clan) throw new NotFoundException('Clan not found');
 
         // Pre-calculate global clan hall stats
-        const stageCounts = new Map<number, number>();
         const fullStageCloses = new Map<number, Date>();
 
         if (context?.clanHall?.progress) {
-            context.clanHall.progress.forEach(p => {
-                stageCounts.set(p.stage, (stageCounts.get(p.stage) || 0) + 1);
-            });
+            const allProgress = context.clanHall.progress;
+            for (let i = 1; i <= 6; i++) {
+                const times: number[] = [];
 
-            for (let i = 1; i <= 7; i++) {
-                if ((stageCounts.get(i) || 0) >= 120) {
-                    const stageRecords = context.clanHall.progress
-                        .filter(p => p.stage === i)
-                        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-                    if (stageRecords.length >= 120) {
-                        fullStageCloses.set(i, stageRecords[119].createdAt);
-                    }
+                // 120th record
+                const stageRecords = allProgress
+                    .filter(p => p.stage === i)
+                    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+                if (stageRecords.length >= 120) {
+                    times.push(stageRecords[119].createdAt.getTime());
+                }
+
+                // Any higher stage
+                const higherStageRecords = allProgress
+                    .filter(p => p.stage > i)
+                    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+                if (higherStageRecords.length > 0) {
+                    times.push(higherStageRecords[0].createdAt.getTime());
+                }
+
+                if (times.length > 0) {
+                    fullStageCloses.set(i, new Date(Math.min(...times)));
                 }
             }
         }
@@ -589,36 +598,50 @@ export class ClansHistoryService {
         const stats = clan.members.map((m: any) => {
             const rhythm = context?.rhythmRecords.find(r => r.characterId === m.id);
             const zu = context?.forbiddenKnowledgeRecords.find(r => r.characterId === m.id);
-            const khProgress = context?.clanHall?.progress.filter(p => p.characterId === m.id) || [];
+            const khProgress = (context?.clanHall?.progress.filter(p => p.characterId === m.id) || [])
+                .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
             
             const attendedStages = new Set<string>();
             const history = khProgress.map(p => ({stage: p.stage, date: p.createdAt.toISOString()}));
 
             if (context?.clanHall && context.dateStart && context.dateEnd) {
-                for (let i = 1; i <= 7; i++) {
-                    const currentDate = new Date(context.dateStart);
-                    const endDate = new Date(context.dateEnd);
+                const start = new Date(context.dateStart);
+                const end = new Date(context.dateEnd);
+                
+                for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+                    const dateStr = d.toISOString().split('T')[0];
+                    
+                    // For historical summary, we need to know what stage was active at various points of that day
+                    // Since it's a "summary", we check if ANY contribution of the member on that day 
+                    // matched the active stage at the moment of contribution.
+                    
+                    const dailyProgress = khProgress.filter(p => p.createdAt.toISOString().split('T')[0] === dateStr);
+                    
+                    // To be fair, for each stage visited this day, we check if the FIRST visit to that stage 
+                    // was when it was the active stage.
+                    const stagesVisitedThisDay = [...new Set(dailyProgress.map(p => p.stage))];
+                    
+                    let attendedActiveStage = false;
+                    for (const stage of stagesVisitedThisDay) {
+                        const firstVisit = dailyProgress.find(p => p.stage === stage);
+                        if (!firstVisit) continue;
 
-                    while (currentDate <= endDate) {
-                        let maxStage = 0;
-                        for (let stage = 1; stage <= 7; stage++) {
-                            // Check against fullStageCloses but restricted by i (simulation of iterative discovery)
-                            if (stage <= i && fullStageCloses.has(stage) && fullStageCloses.get(stage)! <= currentDate) {
-                                maxStage = stage;
+                        const contributionTime = firstVisit.createdAt.getTime();
+                        let activeStageAtTime = 1;
+                        for (let s = 1; s <= 6; s++) {
+                            const closeTime = fullStageCloses.get(s);
+                            if (closeTime && closeTime.getTime() < contributionTime) {
+                                activeStageAtTime = s + 1;
                             }
                         }
-
-                        const dateStr = currentDate.toISOString().split('T')[0];
-                        const todayAttended = khProgress.some(p =>
-                            p.createdAt.toISOString().split('T')[0] === dateStr &&
-                            p.stage === maxStage
-                        );
-
-                        if (todayAttended) {
-                            attendedStages.add(dateStr);
+                        if (stage === activeStageAtTime) {
+                            attendedActiveStage = true;
+                            break;
                         }
+                    }
 
-                        currentDate.setDate(currentDate.getDate() + 1);
+                    if (attendedActiveStage) {
+                        attendedStages.add(dateStr);
                     }
                 }
             }

@@ -45,6 +45,14 @@ export class TasksService {
             execute: this.rallyNotificationsLogic.bind(this),
         });
 
+        this.tasks.set('event-start-feedback-notifications', {
+            id: 'event-start-feedback-notifications',
+            name: 'Уведомления ПЛам о начале события (ОС)',
+            schedule: '* * * * *',
+            description: 'Отправляет уведомления лидерам отрядов в момент начала события для проставления ОС',
+            execute: this.eventStartFeedbackNotificationsLogic.bind(this),
+        });
+
         this.tasks.set('populate-db', {
             id: 'populate-db',
             name: 'Наполнить БД',
@@ -439,6 +447,76 @@ export class TasksService {
                     }
                 }
             }
+        }
+    }
+
+    private async eventStartFeedbackNotificationsLogic() {
+        this.logger.debug('Checking events for start feedback notifications...');
+        const now = new Date();
+        const oneMinuteFromNow = new Date(now.getTime() + 60 * 1000);
+
+        const events = await this.prisma.event.findMany({
+            where: {
+                date: {
+                    gte: now,
+                    lte: oneMinuteFromNow
+                },
+                status: 'UPCOMING',
+                squads: {
+                    some: {
+                        startNotificationSent: false
+                    }
+                }
+            },
+            include: {
+                squads: {
+                    where: {
+                        startNotificationSent: false
+                    }
+                }
+            }
+        });
+
+        let notificationsSent = 0;
+        const notifiedTelegramIds = new Set<string>();
+
+        for (const event of events) {
+            for (const squad of event.squads) {
+                if (!squad.leaderId) continue;
+
+                const leader = await this.prisma.character.findUnique({
+                    where: { id: squad.leaderId },
+                    include: {
+                        user: {
+                            include: { notificationSettings: true }
+                        }
+                    }
+                });
+
+                if (leader?.user?.telegramId && 
+                    leader.user.notificationSettings?.attendanceMarking &&
+                    !notifiedTelegramIds.has(leader.user.telegramId)
+                ) {
+                    const message = `<b>Событие «${event.name}» началось!</b>\n\nНе забудьте проставить обратную связь (ОС) по завершении для вашего отряда.\n\n🔗 Ссылка: https://claner.pw-hub.ru`;
+                    
+                    const sent = await this.telegram.sendMessage(leader.user.telegramId, message);
+                    if (sent) {
+                        notificationsSent++;
+                        notifiedTelegramIds.add(leader.user.telegramId);
+                    }
+                }
+
+                // Отмечаем, что уведомление для этого отряда было обработано (даже если не отправлено из-за настроек или дублей)
+                // чтобы не пытаться отправить его снова в следующем запуске крона
+                await this.prisma.squad.update({
+                    where: { id: squad.id },
+                    data: { startNotificationSent: true }
+                });
+            }
+        }
+
+        if (notificationsSent > 0) {
+            this.logger.log(`Sent ${notificationsSent} event start feedback notifications.`);
         }
     }
 

@@ -197,13 +197,14 @@ model Event {
   clanWeeklyContext ClanWeeklyContext @relation(fields: [contextId], references: [id])
   contextId         String
 
-  type        String
-  name        String
-  description String?
-  date        DateTime
-  rallyTime   DateTime?
-  status      String
-  opponent    String?
+  type              String
+  name              String
+  description       String?
+  date              DateTime
+  rallyTime         DateTime?
+  status            String
+  opponent          String?
+  feedbackSubmitted Boolean   @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -225,6 +226,7 @@ model EventParticipant {
 
   status                 String
   attendance             Boolean @default(false)
+  isReplacement          Boolean @default(false)
   telegramMessageId      String?
   telegramRallyMessageId String?
 
@@ -232,12 +234,14 @@ model EventParticipant {
 }
 
 model Squad {
-  id       String   @id @default(uuid())
-  name     String
-  event    Event    @relation(fields: [eventId], references: [id])
-  eventId  String
-  leaderId String
-  members  String[]
+  id                    String   @id @default(uuid())
+  name                  String
+  event                 Event    @relation(fields: [eventId], references: [id])
+  eventId               String
+  leaderId              String
+  members               String[]
+  feedbackSubmitted     Boolean  @default(false)
+  startNotificationSent Boolean  @default(false)
 }
 
 model ClanApplication {

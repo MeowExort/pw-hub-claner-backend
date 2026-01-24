@@ -92,14 +92,23 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const clanId = event.clanWeeklyContext.clanId;
 
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!user || !user.mainCharacterId) {
+        console.error('User not found or no main character for userId', userId);
+        return;
+      }
+
       // Fetch character bound to the same clan as the event to ensure proper permissions
-      const character = await this.prisma.character.findFirst({
-        where: { userId, clanId },
+      const character = await this.prisma.character.findUnique({
+        where: { id: user.mainCharacterId },
         include: { clan: true },
       });
 
-      if (!character) {
-        console.error('Character not found in the required clan for userId', userId, 'clanId', clanId);
+      if (!character || character.clanId !== clanId) {
+        console.error('Main character not found in the required clan for userId', userId, 'clanId', clanId);
         return;
       }
 

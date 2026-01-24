@@ -1,8 +1,10 @@
 import { Controller, Get, Post, Body, Param, Put, Patch, Delete, UseGuards, Req, BadRequestException, ParseArrayPipe, Query } from '@nestjs/common';
 import { EventsService } from './events.service';
+import { EventsGateway } from './events.gateway';
 import { CreateEventDto } from './dto/create-event.dto';
 import { RsvpDto } from './dto/rsvp.dto';
 import { SquadDto } from './dto/squad.dto';
+import { EventFeedbackDto } from './dto/event-feedback.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -14,7 +16,10 @@ import { ClanPermission } from '../common/constants/permissions';
 @Controller('events')
 @UseGuards(AuthGuard('jwt'), PermissionsGuard)
 export class EventsController {
-  constructor(private readonly eventsService: EventsService) {}
+  constructor(
+      private readonly eventsService: EventsService,
+      private readonly gateway: EventsGateway
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'Получение всех событий', description: 'Возвращает список всех клановых событий' })
@@ -65,6 +70,13 @@ export class EventsController {
   @ApiResponse({ status: 200, description: 'Event completed' })
   complete(@Req() req, @Param('id') id: string, @Body() body: { reportUploaded: boolean }) {
       return this.eventsService.completeEvent(req.user.id, id, body.reportUploaded);
+  }
+
+  @Post(':id/feedback')
+  @ApiOperation({ summary: 'Submit event feedback' })
+  @ApiResponse({ status: 200, description: 'Feedback submitted' })
+  submitFeedback(@Req() req, @Param('id') id: string, @Body() dto: EventFeedbackDto) {
+      return this.eventsService.submitFeedback(req.user.id, id, dto, req.character, this.gateway);
   }
 
   @Delete(':id')

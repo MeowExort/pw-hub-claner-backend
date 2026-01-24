@@ -109,7 +109,8 @@ export class UsersService {
             where: {
                 OR: [
                     {id},
-                    {shortId: id}
+                    {shortId: id},
+                    {gameCharId: id}
                 ]
             },
             include: {clan: true}
